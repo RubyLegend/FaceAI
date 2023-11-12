@@ -42,6 +42,6 @@ if __name__ == "__main__":
     for port in available_cameras:
         QListWidgetItem(MainWindow.CameraList)
         item = MainWindow.CameraList.item(port)
-        item.setText(f'{port}: {available_cameras[port]}')
+        item.setText(f'/dev/video{port}: {available_cameras[port]}')
 
     sys.exit(app.exec_())

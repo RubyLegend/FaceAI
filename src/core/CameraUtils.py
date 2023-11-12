@@ -45,14 +45,23 @@ errorSignal = errorObject()
 
 def openCameraFeed(camera: QListWidgetItem):
     camera_name = camera.text()
-    camera_id = int(camera_name.split(':')[0])
+    camera_path = camera_name.split(':')[0]
 
-    print("Opening camera: " + str(camera_id))
-    camera = cv2.VideoCapture(camera_id)
+    print("Opening camera: " + str(camera_path))
+    camera = cv2.VideoCapture(camera_path)
 
     if camera.isOpened() is False:
         errorSignal.errorSignal.emit("Failed to open camera. Error occured.")
         return
+    
+    for i in range(0, 10):
+        print(f"{i}: {camera.get(i)}")
+
+
+    # Forcing maximum camera resolution
+    camera.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+    camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+    camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
 
     while True:
         ret, frame = camera.read()
