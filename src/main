@@ -1,0 +1,42 @@
+#!/usr/bin/env python3
+
+import sys  # args
+import os  # Environment variables
+from PySide2 import QtWidgets
+from designs.ui_MainWindow import Ui_MainWindow
+
+# Suppressing logging of OpenCV
+
+os.environ['OPENCV_LOG_LEVEL'] = 'OFF'
+
+
+# Global variables
+app = None
+MainWindow = None
+
+
+# Load all windows
+
+
+def loadWindows():
+    global app
+    global MainWindow
+    app = QtWidgets.QApplication(sys.argv)
+    MainWindow = Ui_MainWindow()
+    MainWindow.setupUi(MainWindow)
+
+
+# Main function
+
+
+if __name__ == "__main__":
+    loadWindows()
+    MainWindow.show()
+    sys.exit(app.exec_())
+    # availablePorts, workingPorts = enumerateCamera()
+    # print("Available cameras:")
+    # print(workingPorts)
+    # selectedCamera = input("Select working camera: ")
+    # selectedCamera = int(selectedCamera)
+    # print("Loading camera...")
+    # openCameraFeed(selectedCamera)
