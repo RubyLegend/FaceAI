@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 ################################################################################
-## Form generated from reading UI file 'MainWindowIrnKSZ.ui'
+## Form generated from reading UI file 'MainWindownJVmMi.ui'
 ##
 ## Created by: Qt User Interface Compiler version 5.15.11
 ##
@@ -55,10 +55,10 @@ class Ui_MainWindow(QMainWindow):
 
         self.verticalLayout.addWidget(self.Welcome_Message)
 
-        self.listView = QListView(self.verticalLayoutWidget)
-        self.listView.setObjectName(u"listView")
+        self.CameraList = QListWidget(self.verticalLayoutWidget)
+        self.CameraList.setObjectName(u"CameraList")
 
-        self.verticalLayout.addWidget(self.listView)
+        self.verticalLayout.addWidget(self.CameraList)
 
         MainWindow.setCentralWidget(self.centralwidget)
         self.menubar = QMenuBar(MainWindow)

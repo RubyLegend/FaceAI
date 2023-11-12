@@ -75,7 +75,7 @@
       </widget>
      </item>
      <item>
-      <widget class="QListView" name="listView"/>
+      <widget class="QListWidget" name="CameraList"/>
      </item>
     </layout>
    </widget>

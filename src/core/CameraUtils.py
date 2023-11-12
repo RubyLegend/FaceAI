@@ -1,47 +1,57 @@
 import cv2  # For camera processing
+import os
+
+from PySide2 import QtCore
+from PySide2.QtWidgets import QListWidgetItem
 
 # Enumerate available cameras
-# Link: https://stackoverflow.com/questions/57577445/list-available-cameras-opencv-python#62639343
+# Custom Linux and Windows detection, due to missing generic way
 
-
-def enumerateCamera():
-    """
-    Test the ports and returns a tuple with the available ports
-    and the ones that are working.
-    """
-    is_working = True
-    dev_port = 0
-    working_ports = []
-    available_ports = []
-    while is_working:
-        camera = cv2.VideoCapture(dev_port)
-        if not camera.isOpened():
-            is_working = False
-            print("Port %s is not working." % dev_port)
+def enumerateCameras_Linux():
+    cameras = {}
+    i = 0  # Iterate over each /dev/video*, but under /sys/class/video4linux
+    # Assume, that video4linux is installed
+    device_exist = True
+    while device_exist:
+        if os.path.isfile(f"/sys/class/video4linux/video{i}/name"):
+            print(f"Found path: /sys/class/video4linux/video{i}")
+            with open(f"/sys/class/video4linux/video{i}/name") as file:
+                name = file.read()
+                print(name)
+                cameras[i] = name
         else:
-            is_reading, img = camera.read()
-            w = camera.get(3)
-            h = camera.get(4)
-            if is_reading:
-                print("Port %s is working and reads images (%s x %s)"
-                      % (dev_port, h, w))
-                working_ports.append(dev_port)
-            else:
-                print("Port %s for camera ( %s x %s) is present but \
-                      does not reads." % (dev_port, h, w))
-                available_ports.append(dev_port)
-        dev_port += 1
-    return available_ports, working_ports
+            device_exist = False
 
+        i = i + 1
+
+    return cameras
+
+def enumerateCameras():
+    if os.name == "posix":  # *nix based machine
+        return enumerateCameras_Linux()
+    else:
+        print("Windows support is under development")
+        return {}
+
+
+# Signal to open error window
+class errorObject(QtCore.QObject):
+    errorSignal = QtCore.Signal(str)
+
+errorSignal = errorObject()
 
 # Simple function for watching camera feed
 
-def openCameraFeed(camera_id: int):
+
+def openCameraFeed(camera: QListWidgetItem):
+    camera_name = camera.text()
+    camera_id = int(camera_name.split(':')[0])
+
     print("Opening camera: " + str(camera_id))
     camera = cv2.VideoCapture(camera_id)
 
     if camera.isOpened() is False:
-        print("Failed to open camera.")
+        errorSignal.errorSignal.emit("Failed to open camera. Error occured.")
         return
 
     while True:
