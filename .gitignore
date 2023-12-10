@@ -1,1 +1,4 @@
 Записка.odt
+.~lock.*
+# python vietualenv
+env/

@@ -54,7 +54,7 @@ def openCameraFeed(camera: QListWidgetItem, VideoPreviewWindow, app):
     camera_name = camera.text()
     camera_path = camera_name.split(':')[0]
 
-    print("Opening camera: " + str(camera_path))
+    print("[DEBUG] Opening camera: " + str(camera_path))
     camera = cv2.VideoCapture(camera_path)
 
     if camera.isOpened() is False:
@@ -75,8 +75,12 @@ def openCameraFeed(camera: QListWidgetItem, VideoPreviewWindow, app):
     
     while reading:
         ret, frame = camera.read()
+        
+        # Swapping to match RGB888, othervise coming as BGR888
+        # Which is not working on pyside2 from a repo
+        frame[..., [0, 2]] = frame[..., [2, 0]]
 
-        VideoPreviewWindow.ImageFeed.setPixmap(QPixmap(QImage(frame.data, frame.shape[1], frame.shape[0], QImage.Format_RGB888)))
+        VideoPreviewWindow.ImageFeed.setPixmap(QPixmap(QImage(frame.data, frame.shape[1], frame.shape[0], QtGui.QImage.Format.Format_RGB888)))
         app.processEvents()
 
         if not VideoPreviewWindow.isVisible():
@@ -93,4 +97,4 @@ def fillCameraList(CameraList: QListWidget):
         QListWidgetItem(CameraList)
         item = CameraList.item(port)
         item.setText(f'/dev/video{port}: {available_cameras[port]}')
-        item.setTextAlignment(Qt.AlignVCenter)
+        # item.setTextAlignment(Qt.AlignVCenter)
