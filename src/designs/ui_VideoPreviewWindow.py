@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 ################################################################################
-## Form generated from reading UI file 'VideoPreviewWindowUpLJuo.ui'
+## Form generated from reading UI file 'VideoPreviewWindowMUXuUg.ui'
 ##
 ## Created by: Qt User Interface Compiler version 5.15.11
 ##
@@ -31,8 +31,9 @@ class Ui_VideoPreviewWindow(QWidget):
         self.ImageFeed.setSizePolicy(sizePolicy)
         self.ImageFeed.setScaledContents(True)
         self.ImageFeed.setAlignment(Qt.AlignCenter)
+        self.ImageFeed.setOpenExternalLinks(False)
 
-        self.verticalLayout.addWidget(self.ImageFeed)
+        self.verticalLayout.addWidget(self.ImageFeed, 0, Qt.AlignHCenter|Qt.AlignVCenter)
 
 
         self.retranslateUi(VideoPreviewWindow)
@@ -42,6 +43,6 @@ class Ui_VideoPreviewWindow(QWidget):
 
     def retranslateUi(self, VideoPreviewWindow):
         VideoPreviewWindow.setWindowTitle(QCoreApplication.translate("VideoPreviewWindow", u"Video Preview", None))
-        self.ImageFeed.setText(QCoreApplication.translate("VideoPreviewWindow", u"TextLabel", None))
+        self.ImageFeed.setText("")
     # retranslateUi
 

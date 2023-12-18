@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 ################################################################################
-## Form generated from reading UI file 'MainWindowXcFAuJ.ui'
+## Form generated from reading UI file 'MainWindowkYfegZ.ui'
 ##
 ## Created by: Qt User Interface Compiler version 5.15.11
 ##
@@ -107,7 +107,7 @@ class Ui_MainWindow(QMainWindow):
         MainWindow.setCentralWidget(self.centralwidget)
         self.menubar = QMenuBar(MainWindow)
         self.menubar.setObjectName(u"menubar")
-        self.menubar.setGeometry(QRect(0, 0, 800, 19))
+        self.menubar.setGeometry(QRect(0, 0, 800, 30))
         self.menubar.setDefaultUp(False)
         self.menubar.setNativeMenuBar(True)
         self.menuFile = QMenu(self.menubar)
@@ -137,7 +137,7 @@ class Ui_MainWindow(QMainWindow):
 #if QT_CONFIG(shortcut)
         self.actionExit.setShortcut(QCoreApplication.translate("MainWindow", u"Alt+X", None))
 #endif // QT_CONFIG(shortcut)
-        self.Title.setText(QCoreApplication.translate("MainWindow", u"Face Recognition System v0.1", None))
+        self.Title.setText(QCoreApplication.translate("MainWindow", u"Face Recognition System v0.3", None))
         self.Welcome_Message.setText(QCoreApplication.translate("MainWindow", u"Select your camera:", None))
         self.RefreshButton.setText(QCoreApplication.translate("MainWindow", u"Refresh list", None))
 

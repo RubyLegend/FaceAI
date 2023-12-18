@@ -11,7 +11,7 @@ from PySide2.QtWidgets import QListWidgetItem
 from designs.ui_MainWindow import Ui_MainWindow
 from designs.ui_ErrorWindow import Ui_ErrorWindow
 from designs.ui_VideoPreviewWindow import Ui_VideoPreviewWindow
-from core.CameraUtils import enumerateCameras, openCameraFeed, errorSignal, fillCameraList
+from core.CameraUtils import enumerateCameras, openCameraFeed, errorSignal, fillCameraList, enrollNewFace, testFaceRealTime
 # Creating all windows
 app = QtWidgets.QApplication()
 MainWindow = Ui_MainWindow()
@@ -30,13 +30,43 @@ def fillCameraListHandler():
 
 
 def showVideoHandler(camera):
+    # MainWindow.hide()
     openCameraFeed(camera, VideoPreviewWindow, app)
+    # MainWindow.show()
+
+
+def enrollNewFaceHandler():
+    selectedCamera = MainWindow.CameraList.selectedItems()
+
+    if len(selectedCamera) == 0:
+        showError("No camera selected")
+    elif len(selectedCamera) > 1:
+        showError("Select only one camera")
+    else:
+        MainWindow.hide()
+        enrollNewFace(selectedCamera[0], VideoPreviewWindow, app)
+        MainWindow.show()
+
+
+def testFaceHandler():
+    selectedCamera = MainWindow.CameraList.selectedItems()
+
+    if len(selectedCamera) == 0:
+        showError("No camera selected")
+    elif len(selectedCamera) > 1:
+        showError("Select only one camera")
+    else:
+        MainWindow.hide()
+        testFaceRealTime(selectedCamera[0], VideoPreviewWindow, app)
+        MainWindow.show()
 
 
 # Load all windows
 MainWindow.setupUi(MainWindow)
 MainWindow.CameraList.itemDoubleClicked.connect(showVideoHandler)
 MainWindow.RefreshButton.clicked.connect(fillCameraListHandler)
+MainWindow.TrainButton.clicked.connect(enrollNewFaceHandler)
+MainWindow.TestButton.clicked.connect(testFaceHandler)
 
 ErrorWindow.setupUi(ErrorWindow)
 errorSignal.errorSignal.connect(showError)

@@ -1,4 +1,7 @@
-Записка.odt
+*.odt
+*.pdf
+src/data
 .~lock.*
-# python vietualenv
+# python virtualenv
 env/
+src/faceid_network

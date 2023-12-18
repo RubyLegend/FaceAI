@@ -4,14 +4,24 @@
 # because I want to have full understanding of what is happening here
 # and most importantly, how and why.
 
-from keras.models import Sequential, Model
-from keras.layers import Dense, Activation, Flatten, Dropout, Lambda, ELU, concatenate, GlobalAveragePooling2D, Input, BatchNormalization, SeparableConv2D, Subtract, concatenate
-from keras.activations import relu, softmax
-from keras.layers.convolutional import Convolution2D
-from keras.layers.pooling import MaxPooling2D, AveragePooling2D
-from keras.optimizers import Adam, RMSprop, SGD
-from keras.regularizers import l2
-from keras import backend as K
+from tensorflow.keras.models import Sequential, Model, model_from_json, load_model
+from tensorflow.keras.layers import Dense, Activation, Flatten, Dropout, Lambda, ELU, concatenate, GlobalAveragePooling2D, Input, BatchNormalization, SeparableConv2D, Subtract, concatenate
+from tensorflow.keras.activations import relu  # , softmax
+from tensorflow.keras.layers import Conv2D as Convolution2D
+from tensorflow.keras.layers import MaxPooling2D  # , AveragePooling2D
+from tensorflow.keras.optimizers import Adam, SGD  # , RMSprop
+# from tensorflow.keras.regularizers import l2
+from tensorflow.keras import backend as K
+from tensorflow.keras.utils import plot_model
+
+import numpy as np
+import glob
+import random
+import cv2
+
+from PIL import Image
+
+from core.headPosition import detectFace
 
 def euclidean_distance(inputs):
     assert len(inputs) == 2, \
@@ -38,100 +48,337 @@ def fire(x, squeeze=16, expand=64):
     x = concatenate([left, right], axis=3)
     return x
 
-img_input=Input(shape=(200,200,4))
+def getNewModel():
+    img_input=Input(shape=(200,200,3))  # was 200, 200, 4
 
-x = Convolution2D(64, (5, 5), strides=(2, 2), padding='valid')(img_input)
-x = BatchNormalization()(x)
-x = Activation('relu')(x)
-x = MaxPooling2D(pool_size=(3, 3), strides=(2, 2))(x)
+    x = Convolution2D(64, (5, 5), strides=(2, 2), padding='valid')(img_input)
+    x = BatchNormalization()(x)
+    x = Activation('relu')(x)
+    x = MaxPooling2D(pool_size=(3, 3), strides=(2, 2))(x)
 
-x = fire(x, squeeze=16, expand=16)
+    x = fire(x, squeeze=16, expand=16)
 
-x = fire(x, squeeze=16, expand=16)
+    x = fire(x, squeeze=16, expand=16)
 
-x = MaxPooling2D(pool_size=(3, 3), strides=(2, 2))(x)
-
-
-x = fire(x, squeeze=32, expand=32)
-
-x = fire(x, squeeze=32, expand=32)
-
-x = MaxPooling2D(pool_size=(3, 3), strides=(2, 2))(x)
+    x = MaxPooling2D(pool_size=(3, 3), strides=(2, 2))(x)
 
 
-x = fire(x, squeeze=48, expand=48)
+    x = fire(x, squeeze=32, expand=32)
 
-x = fire(x, squeeze=48, expand=48)
+    x = fire(x, squeeze=32, expand=32)
 
-x = fire(x, squeeze=64, expand=64)
-
-x = fire(x, squeeze=64, expand=64)
-
-x = Dropout(0.2)(x)
-
-x = Convolution2D(512, (1, 1), padding='same')(x)
-out = Activation('relu')(x)
+    x = MaxPooling2D(pool_size=(3, 3), strides=(2, 2))(x)
 
 
-modelsqueeze= Model(img_input, out)
+    x = fire(x, squeeze=48, expand=48)
 
-modelsqueeze.summary()
+    x = fire(x, squeeze=48, expand=48)
 
-im_in = Input(shape=(200,200,4))
-#wrong = Input(shape=(200,200,3))
+    x = fire(x, squeeze=64, expand=64)
 
-x1 = modelsqueeze(im_in)
+    x = fire(x, squeeze=64, expand=64)
+
+    x = Dropout(0.2)(x)
+
+    x = Convolution2D(512, (1, 1), padding='same')(x)
+    out = Activation('relu')(x)
+
+
+    modelsqueeze= Model(img_input, out)
+
+    modelsqueeze.summary()
+
+    im_in = Input(shape=(200,200,3))  # was 130,200,4
+#wrong = Input(shape=(130,200,3))
+
+    x1 = modelsqueeze(im_in)
 #x = Convolution2D(64, (5, 5), padding='valid', strides =(2,2))(x)
 
 #x1 = MaxPooling2D(pool_size=(3, 3), strides=(2, 2))(x1)
 
-"""
-x1 = Convolution2D(256, (3,3), padding='valid', activation="relu")(x1)
-x1 = Dropout(0.4)(x1)
+    """
+    x1 = Convolution2D(256, (3,3), padding='valid', activation="relu")(x1)
+    x1 = Dropout(0.4)(x1)
 
-x1 = MaxPooling2D(pool_size=(3, 3), strides=(1, 1))(x1)
+    x1 = MaxPooling2D(pool_size=(3, 3), strides=(1, 1))(x1)
 
-x1 = Convolution2D(256, (3,3), padding='valid', activation="relu")(x1)
-x1 = BatchNormalization()(x1)
-x1 = Dropout(0.4)(x1)
+    x1 = Convolution2D(256, (3,3), padding='valid', activation="relu")(x1)
+    x1 = BatchNormalization()(x1)
+    x1 = Dropout(0.4)(x1)
 
-x1 = Convolution2D(64, (1,1), padding='same', activation="relu")(x1)
-x1 = BatchNormalization()(x1)
-x1 = Dropout(0.4)(x1)
-"""
-
-
-
-x1 = Flatten()(x1)
-
-x1 = Dense(512, activation="relu")(x1)
-x1 = Dropout(0.2)(x1)
-#x1 = BatchNormalization()(x1)
-feat_x = Dense(128, activation="linear")(x1)
-feat_x = Lambda(lambda  x: K.l2_normalize(x,axis=1))(feat_x)
+    x1 = Convolution2D(64, (1,1), padding='same', activation="relu")(x1)
+    x1 = BatchNormalization()(x1)
+    x1 = Dropout(0.4)(x1)
+    """
 
 
-model_top = Model(inputs = [im_in], outputs = feat_x)
 
-model_top.summary()
+    x1 = Flatten()(x1)
 
-im_in1 = Input(shape=(200,200,4))
-im_in2 = Input(shape=(200,200,4))
-
-feat_x1 = model_top(im_in1)
-feat_x2 = model_top(im_in2)
-
-
-lambda_merge = Lambda(euclidean_distance)([feat_x1, feat_x2])
+    x1 = Dense(512, activation="relu")(x1)
+    x1 = Dropout(0.2)(x1)
+# x1 = BatchNormalization()(x1)
+    feat_x = Dense(128, activation="linear")(x1)
+    feat_x = Lambda(lambda  x: K.l2_normalize(x,axis=1))(feat_x)
 
 
-model_final = Model(inputs = [im_in1, im_in2], outputs = lambda_merge)
+    model_top = Model(inputs = [im_in], outputs = feat_x)
 
-model_final.summary()
+    model_top.summary()
 
-adam = Adam(lr=0.001)
+    im_in1 = Input(shape=(200,200,3))  # was 200, 200,4
+    im_in2 = Input(shape=(200,200,3))  # was 200, 200,4
 
-sgd = SGD(lr=0.001, momentum=0.9)
+    feat_x1 = model_top(im_in1)
+    feat_x2 = model_top(im_in2)
 
-model_final.compile(optimizer=adam, loss=contrastive_loss)
 
+    lambda_merge = Lambda(euclidean_distance)([feat_x1, feat_x2])
+
+
+    model_final = Model(inputs = [im_in1, im_in2], outputs = lambda_merge)
+
+    model_final.summary()
+
+    adam = Adam(learning_rate=0.001)
+
+    sgd = SGD(learning_rate=0.001, momentum=0.9)
+
+    model_final.compile(optimizer=adam, loss=contrastive_loss)
+
+    # plot_model(model_final, show_shapes=True, expand_nested=True, to_file="plot.png")
+    
+    return model_final
+
+def loadModel():
+    # model 01getNewModel()
+    model = load_model("faceid_network/", compile=False)
+    adam = Adam(learning_rate=0.001)
+    model.compile(optimizer=adam, loss=contrastive_loss)
+
+    return model
+
+def get_offsets(x1, x2, y1, y2):
+    left, right, up, down = 0,0,0,0
+
+    if x2 - x1 != 200:
+        left = int((200 - x2 + x1) / 2)
+        x1 -= left
+        if x1 < 0:
+            x1 = 0
+        x2 = x1 + 200
+        if x2 > 640:  # TODO: add normal limits instead of hardcoded
+            x1 -= (x2 - 640)
+            x2 = 640
+
+    if y2 - y1 != 200:
+        down = int((200 - y2 + y1) / 2)
+        y1 -= down
+        if y1 < 0:
+            y1 = 0
+        y2 = y1 + 200
+        if y2 > 360:
+            y1 -= (y2 - 360)
+            y2 = 360
+
+
+    return x1, x2, y1, y2
+
+def create_correct_couple() -> np.array:
+    i = random.randint(0, 35)
+    img1 = np.load(f"data/{i}.npy")
+    # img1.thumbnail((640, 360))
+    img1 = cv2.resize(img1, (640, 360))
+    # img1.save("thumbnail.jpg", "JPEG")
+    # img1 = np.asarray(img1)
+    # _, _, detected, x_coords, y_coords = detectFace(img1)
+    # while not detected:
+    #     print(f'{i}: {detected}')
+    #     _, _, detected, x_coords, y_coords = detectFace(img1)
+    #
+    #
+    # x1, x2 = x_coords
+    # y1, y2 = y_coords
+    #
+    # x1, x2, y1, y2 = get_offsets(x1, x2, y1, y2)
+    # 
+    # print(f'{i}, {detected}, {x_coords}, {y_coords}, {img1.shape}')
+    with open(f"data/{i}.pos") as file:
+        x1 = int(file.readline())
+        x2 = int(file.readline())
+        y1 = int(file.readline())
+        y2 = int(file.readline())
+
+    img1 = img1[y1:y2, x1:x2]
+
+    # print(f'{i} ', end='')
+
+    i = random.randint(0, 35)
+    img2 = np.load(f"data/{i}.npy")
+    # img2.thumbnail((640, 480))
+    img2 = cv2.resize(img2, (640, 360))
+    # img2 = np.asarray(img2)
+    # _, _, detected, x_coords, y_coords = detectFace(img2)
+    # 
+    # while not detected:
+    #     print(f'{i}: {detected}')
+    #     _, _, detected, x_coords, y_coords = detectFace(img2)
+    #
+    # x1, x2 = x_coords
+    # y1, y2 = y_coords
+    #
+    # x1, x2, y1, y2 = get_offsets(x1, x2, y1, y2)
+
+    # print(f'{i}, {detected}, {x_coords}, {y_coords}, {img2.shape}')
+    with open(f"data/{i}.pos") as file:
+        x1 = int(file.readline())
+        x2 = int(file.readline())
+        y1 = int(file.readline())
+        y2 = int(file.readline())
+
+    img2 = img2[y1:y2, x1:x2]
+
+    # print(f'{i}: {img1.shape}, {img2.shape}')
+
+    return np.array([img1, img2])
+
+def create_incorrect_couple() -> np.array:
+    i = random.randint(0, 35)
+    img1 = np.load(f"data/{i}.npy")
+    # img1.thumbnail((640, 360))
+    img1 = cv2.resize(img1, (640, 360))
+    with open(f"data/{i}.pos") as file:
+        x1 = int(file.readline())
+        x2 = int(file.readline())
+        y1 = int(file.readline())
+        y2 = int(file.readline())
+
+    img1 = img1[y1:y2, x1:x2]
+
+    # i = random.randint(0, 25)
+    # j = random.randint(0, 12)
+    # img1 = Image.open(np.random.choice(glob.glob(f"data/datasets/RGBD_Face_dataset_training/*_image_corrected.png")))
+    # img1.thumbnail((640, 360))
+    # img1 = np.asarray(img1)
+    # _, _, detected, x_coords, y_coords = detectFace(img1)
+    # 
+    # while not detected:
+    #     print(f'{i},{j} - {detected}')
+    #     i = random.randint(0, 25)
+    #     j = random.randint(0, 12)
+    #     img1 = Image.open(f"data/datasets/RGBD_Face_dataset_training/{i:03d}_{j:02d}_image.png")
+    #     img1.thumbnail((640, 360))
+    #     img1 = np.asarray(img1)
+    #     _, _, detected, x_coords, y_coords = detectFace(img1)
+    #
+    # x1, x2 = x_coords
+    # y1, y2 = y_coords
+    #
+    # x1, x2, y1, y2 = get_offsets(x1, x2, y1, y2)
+    
+    # Approximated coordinates, because mediapipe cannot detect faces propertly...
+    # x1, x2, y1, y2 = 200, 400, 80, 280
+
+    # img1 = img1[y1:y2, x1:x2]
+
+    # i = random.randint(0, 25)
+    # j = random.randint(0, 12)
+    img2 = Image.open(np.random.choice(glob.glob(f"data/datasets/RGBD_Face_dataset_training/*_image_corrected.png")))
+    # img2.thumbnail((640, 360))
+    img2 = np.asarray(img2)
+    # _, _, detected, x_coords, y_coords = detectFace(img2)
+    # 
+    # while not detected:
+    #     print(f'{i},{j} - {detected}')
+    #     i = random.randint(0, 25)
+    #     j = random.randint(0, 12)
+    #     img2 = Image.open(f"data/datasets/RGBD_Face_dataset_training/{i:03d}_{j:02d}_image.png")
+    #     img2.thumbnail((640, 360))
+    #     img2 = np.asarray(img2)
+    #     _, _, detected, x_coords, y_coords = detectFace(img2)
+    #
+    # x1, x2 = x_coords
+    # y1, y2 = y_coords
+    #
+    # x1, x2, y1, y2 = get_offsets(x1, x2, y1, y2)
+    
+    # img2 = img2[y1:y2, x1:x2]
+
+    # print(f'{img1.shape}, {img2.shape}')
+
+    return np.array([img1, img2])
+
+def generate_batch(batch_size, with_invalid=False):
+    while 1:
+        X = []  # Data of that images
+        Y = []  # Labels that mark each of my captured images as true (of false, if I'm pre-train model)
+        valid = True
+        for _ in range(batch_size):
+            if valid or with_invalid is False:
+                val = create_correct_couple()
+                X.append(val)
+                Y.append(np.array([0.]))
+                valid = False
+            else:
+                val = create_incorrect_couple()
+                X.append(val)
+                Y.append(np.array([1.]))
+                valid = True
+
+        X = np.asarray(X)
+        Y = np.asarray(Y)
+
+        yield [X[:, 0], X[:, 1]], Y
+
+
+def train(model, event):
+    data = generate_batch(50, True)
+    val_data = generate_batch(20, True)
+    new_model = model.fit(data, steps_per_epoch=5, epochs=100, validation_data = val_data, validation_steps=10)
+    model.save("faceid_network/")
+    event.set()
+
+def modelDetectFace(model, frame):
+    X = []
+    i = random.randint(0, 35)
+    img1 = np.load(f"data/{i}.npy")
+    # img1.thumbnail((640, 360))
+    img1 = cv2.resize(img1, (640, 360))
+    # img1 = np.asarray(img1)
+    # _, _, _, x_coords, y_coords = detectFace(img1)
+    #
+    # x1, x2 = x_coords
+    # y1, y2 = y_coords
+    #
+    # x1, x2, y1, y2 = get_offsets(x1, x2, y1, y2)
+    # 
+    with open(f'./data/{i}.pos') as file:
+        x1 = int(file.readline())
+        x2 = int(file.readline())
+        y1 = int(file.readline())
+        y2 = int(file.readline())
+
+    img1 = img1[y1:y2, x1:x2]
+
+    frame2 = cv2.resize(frame, (640, 360))
+    _, _, detected, x_coords, y_coords = detectFace(frame2)
+
+    if detected:
+        x1, x2 = x_coords
+        y1, y2 = y_coords
+
+        x1, x2, y1, y2 = get_offsets(x1, x2, y1, y2)
+        if x1 >= 640 or x1 <= 0 or x2 >= 640 or x2 <= 0\
+           or y1 >= 360 or y1 <= 0 or y2 >= 360 or y2 <= 0:
+            return False
+        
+        frame2 = frame2[y1:y2, x1:x2]
+    else:
+        # Return false, because face is not detected on a frame
+        return False
+
+    res = model.predict([np.array([img1]), np.array([frame2])])
+    print(res)
+    if res <= 0.01:
+        return True
+    return False
