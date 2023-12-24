@@ -11,7 +11,7 @@ from PySide2.QtWidgets import QListWidgetItem, QListWidget
 from PySide2.QtGui import QImage, QPixmap
 
 from core.headPosition import detectFace
-from core.network import getNewModel, loadModel, train, modelDetectFace
+from core.network import getNewModel, getNewModel2, loadModel, train, modelDetectFace, get_offsets
 
 # Enumerate available cameras
 # Custom Linux and Windows detection, due to missing generic way
@@ -111,43 +111,6 @@ def fillCameraList(CameraList: QListWidget):
         # item.setTextAlignment(Qt.AlignVCenter)
 
 
-def get_offsets(x1, x2, y1, y2):
-    left, right, up, down = 0,0,0,0
-
-    if x2 - x1 != 200:
-        left = int((200 - x2 + x1) / 2)
-        # print(f"left: {left}")
-        x1 -= left
-        # print(f"new x1: {x1}")
-        if x1 < 0:
-            x1 = 0
-            # print('x1 corrected to 0')
-        x2 = x1 + 200
-        if x2 > 640:  # TODO: add normal limits instead of hardcoded
-            # print(f'x2: {x2} > 640, correcting')
-            x1 -= (x2 - 640)
-            x2 = 640
-            # print(f'new x1: {x1}, x2 = {x2}')
-
-    if y2 - y1 != 200:
-        down = int((200 - y2 + y1) / 2)
-        # print(f'down: {down}')
-        y1 -= down
-        # print(f'new y1: {y1}')
-        if y1 < 0:
-            y1 = 0
-            # print('y1 corrected to 0')
-        y2 = y1 + 200
-        if y2 > 360:
-            # print(f'y2: {y2} > 360, correcting')
-            y1 -= (y2 - 360)
-            y2 = 360
-            # print(f'new y1: {y1}, y2 = {y2}')
-
-
-    return x1, x2, y1, y2
-
-
 def enrollNewFace(camera: QListWidgetItem, VideoPreviewWindow, app):
     camera_name = camera.text()
     camera_path = camera_name.split(':')[0]
@@ -197,7 +160,7 @@ def enrollNewFace(camera: QListWidgetItem, VideoPreviewWindow, app):
         sel2 = stencil == mask_value
         dots_selection.append(sel2)
 
-    reading = True  # Change to False, if you want to temporary skip capturing phase
+    reading = False  # Change to False, if you want to temporary skip capturing phase
 
     while reading:
         ret, raw_frame = camera.read()
@@ -208,14 +171,14 @@ def enrollNewFace(camera: QListWidgetItem, VideoPreviewWindow, app):
         _, _, detected2, x_coords, y_coords = detectFace(cv2.resize(raw_frame, (640, 360)), draw=False)
         it = len(angles) - int(angle / 10) - 1
         if angle != 0 and int(angle % 10) <= 3 and angles[it][2] is not True and detected2 is True:
-            print(f'Downscaled image: {detected2}')
-            print(f'Registering {it}')
+            print(f'Detected on downscaled image: {detected2}')
+            print(f'Registering: {it}')
             original = angles[it]
             angles[it] = (original[0], original[1], True)
-            np.save(f"./data/{it}", raw_frame)
+            np.save(f"./src/data/{it}", raw_frame)
             
             x1, x2, y1, y2 = get_offsets(x_coords[0], x_coords[1], y_coords[0], y_coords[1])
-            with open(f"./data/{it}.pos", "w") as file:
+            with open(f"./src/data/{it}.pos", "w") as file:
                 file.write(str(x1) + '\n')
                 file.write(str(x2) + '\n')
                 file.write(str(y1) + '\n')
@@ -248,7 +211,7 @@ def enrollNewFace(camera: QListWidgetItem, VideoPreviewWindow, app):
 
     if VideoPreviewWindow.isVisible():
         event = threading.Event()
-        threading.Thread(target=train, args=(getNewModel(), event)).start()
+        threading.Thread(target=train, args=(getNewModel2(), event)).start()
         learning = True
         counter = 0
 
