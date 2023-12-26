@@ -17,6 +17,7 @@ app = QtWidgets.QApplication()
 MainWindow = Ui_MainWindow()
 ErrorWindow = Ui_ErrorWindow()
 VideoPreviewWindow = Ui_VideoPreviewWindow()
+FacePreviewWindow = Ui_VideoPreviewWindow()
 
 
 # Error window setup
@@ -44,7 +45,7 @@ def enrollNewFaceHandler():
         showError("Select only one camera")
     else:
         MainWindow.hide()
-        enrollNewFace(selectedCamera[0], VideoPreviewWindow, app)
+        enrollNewFace(selectedCamera[0], VideoPreviewWindow, FacePreviewWindow, app)
         MainWindow.show()
 
 
@@ -57,7 +58,7 @@ def testFaceHandler():
         showError("Select only one camera")
     else:
         MainWindow.hide()
-        testFaceRealTime(selectedCamera[0], VideoPreviewWindow, app)
+        testFaceRealTime(selectedCamera[0], VideoPreviewWindow, FacePreviewWindow, app)
         MainWindow.show()
 
 
@@ -72,6 +73,7 @@ ErrorWindow.setupUi(ErrorWindow)
 errorSignal.errorSignal.connect(showError)
 
 VideoPreviewWindow.setupUi(VideoPreviewWindow)
+FacePreviewWindow.setupUi(FacePreviewWindow)
 
 # Main function
 if __name__ == "__main__":

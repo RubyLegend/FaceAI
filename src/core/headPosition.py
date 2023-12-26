@@ -16,7 +16,7 @@ drawing_spec = mp_drawind.DrawingSpec(thickness=1, circle_radius=1)
 
 
 def detectFace(image: np.ndarray, draw=False):
-    image = cv2.cvtColor(cv2.flip(image, 1), cv2.COLOR_BGR2RGB)
+    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
     image.flags.writeable = False
 
@@ -205,7 +205,7 @@ def visualize(image, detection_result) -> np.ndarray:
 
 
 # STEP 2: Create an FaceDetector object.
-base_options = python.BaseOptions(model_asset_path="src/detector.tflite")
+base_options = python.BaseOptions(model_asset_path="src/blaze_face_short_range.tflite")
 options = vision.FaceDetectorOptions(base_options=base_options)
 detector = vision.FaceDetector.create_from_options(options)
 

@@ -4,6 +4,7 @@ import time
 import math
 import numpy as np
 import threading
+from copy import deepcopy
 
 from PySide2 import QtCore, QtGui
 from PySide2.QtCore import Qt, QSize
@@ -111,7 +112,7 @@ def fillCameraList(CameraList: QListWidget):
         # item.setTextAlignment(Qt.AlignVCenter)
 
 
-def enrollNewFace(camera: QListWidgetItem, VideoPreviewWindow, app):
+def enrollNewFace(camera: QListWidgetItem, VideoPreviewWindow, FacePreviewWindow, app):
     camera_name = camera.text()
     camera_path = camera_name.split(':')[0]
 
@@ -129,11 +130,19 @@ def enrollNewFace(camera: QListWidgetItem, VideoPreviewWindow, app):
     camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
 
     window_width, window_height = 1280, 720
+    facewindow_width, facewindow_height = 500, 500
 
     VideoPreviewWindow.show()
     VideoPreviewWindow.resize(window_width, window_height)
+    VideoPreviewWindow.setMinimumSize(QSize(0, 0))
     VideoPreviewWindow.setMaximumSize(QSize(window_width, window_height))
     VideoPreviewWindow.setMinimumSize(QSize(window_width, window_height))
+
+    FacePreviewWindow.show()
+    FacePreviewWindow.resize(facewindow_width, facewindow_height)
+    FacePreviewWindow.setMinimumSize(QSize(0, 0))
+    FacePreviewWindow.setMaximumSize(QSize(facewindow_width, facewindow_height))
+    FacePreviewWindow.setMinimumSize(QSize(facewindow_width, facewindow_height))
 
     circle_center = (int(img_w/2), int(img_h/2))
     radius = 250
@@ -153,6 +162,7 @@ def enrollNewFace(camera: QListWidgetItem, VideoPreviewWindow, app):
     angles2 = [(int(val[0] + math.cos((350 - alpha)*2*math.pi/360)*20), int(val[1] + math.sin((350 - alpha)*2*math.pi/360)*20)) for alpha, val, _ in angles]
 
     dots_selection = []
+    face = None
 
     for i in range(len(angles)):
         stencil = np.zeros((img_h, img_w), dtype=np.int16)
@@ -164,8 +174,10 @@ def enrollNewFace(camera: QListWidgetItem, VideoPreviewWindow, app):
 
     while reading:
         ret, raw_frame = camera.read()
+        if face is None:
+            face = raw_frame
 
-        frame, angle, detected, _, _ = detectFace(raw_frame, draw=True)
+        frame, angle, detected, x, y = detectFace(raw_frame, draw=True)
         # Trying to recognize again, because later network fails to recognize it
         # Even though it was recognized successfully.
         _, _, detected2, x_coords, y_coords = detectFace(cv2.resize(raw_frame, (640, 360)), draw=False)
@@ -177,18 +189,29 @@ def enrollNewFace(camera: QListWidgetItem, VideoPreviewWindow, app):
             angles[it] = (original[0], original[1], True)
             np.save(f"./src/data/{it}", raw_frame)
             
-            x1, x2, y1, y2 = get_offsets(x_coords[0], x_coords[1], y_coords[0], y_coords[1])
+            x1, x2, y1, y2, is_resize = get_offsets(x_coords[0], x_coords[1], y_coords[0], y_coords[1])
             with open(f"./src/data/{it}.pos", "w") as file:
                 file.write(str(x1) + '\n')
                 file.write(str(x2) + '\n')
                 file.write(str(y1) + '\n')
                 file.write(str(y2) + '\n')
+                file.write(str(is_resize) + '\n')
 
         # Swapping to match RGB888, othervise coming as BGR888
         # Which is not working on pyside2 from a pypi repo
         # frame[..., [0, 2]] = frame[..., [2, 0]]
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
+        # Getting face cropped
+        if detected:
+            # face = deepcopy(frame)
+            face = raw_frame[y[0]:y[1], x[0]:x[1]]
+            if face.shape[0] != 0 and face.shape[1] != 0:
+                face = cv2.cvtColor(face, cv2.COLOR_BGR2RGB)
+                face = cv2.resize(face, (400, 400))
+            # face = np.ascontiguousarray(face)
+            print(face.shape)
+
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         # Drawing white frame, to limit position of face in frame
         frame[sel] = fill_color
         # Drawing gray dots, to mimic FaceID dots
@@ -201,13 +224,16 @@ def enrollNewFace(camera: QListWidgetItem, VideoPreviewWindow, app):
                 frame[dots_selection[it]] = fill_color_not_registered
                 reading = True
 
+        FacePreviewWindow.show()
         VideoPreviewWindow.ImageFeed.setPixmap(QPixmap(QImage(frame.data, frame.shape[1], frame.shape[0], QtGui.QImage.Format.Format_RGB888)).scaled(QSize(window_width, window_height), Qt.KeepAspectRatio))
+        FacePreviewWindow.ImageFeed.setPixmap(QPixmap(QImage(face.data, face.shape[1], face.shape[0], QtGui.QImage.Format.Format_RGB888)).scaled(QSize(facewindow_width, facewindow_height), Qt.KeepAspectRatio))
         app.processEvents()
 
         if not VideoPreviewWindow.isVisible():
             reading = False
 
     camera.release()
+    FacePreviewWindow.hide()
 
     if VideoPreviewWindow.isVisible():
         event = threading.Event()
@@ -232,9 +258,10 @@ def enrollNewFace(camera: QListWidgetItem, VideoPreviewWindow, app):
         time.sleep(3)
 
     VideoPreviewWindow.hide()
+    FacePreviewWindow.hide()
 
 
-def testFaceRealTime(camera: QListWidgetItem, VideoPreviewWindow, app):
+def testFaceRealTime(camera: QListWidgetItem, VideoPreviewWindow, FacePreviewWindow, app):
     camera_name = camera.text()
     camera_path = camera_name.split(':')[0]
 
@@ -251,11 +278,21 @@ def testFaceRealTime(camera: QListWidgetItem, VideoPreviewWindow, app):
     camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
 
     window_width, window_height = 1280, 720
+    facewindow_width, facewindow_height = 600, 600
 
     VideoPreviewWindow.show()
     VideoPreviewWindow.resize(window_width, window_height)
+    VideoPreviewWindow.setMinimumSize(QSize(0, 0))
     VideoPreviewWindow.setMaximumSize(QSize(window_width, window_height))
     VideoPreviewWindow.setMinimumSize(QSize(window_width, window_height))
+
+    FacePreviewWindow.show()
+    FacePreviewWindow.resize(facewindow_width, facewindow_height)
+    FacePreviewWindow.setMinimumSize(QSize(0, 0))
+    FacePreviewWindow.setMaximumSize(QSize(facewindow_width, facewindow_height))
+    FacePreviewWindow.setMinimumSize(QSize(facewindow_width, facewindow_height))
+
+    face = None
 
     # Loading model
     print("[DEBUG] Loading model...")
@@ -266,21 +303,37 @@ def testFaceRealTime(camera: QListWidgetItem, VideoPreviewWindow, app):
 
     while reading:
         ret, frame = camera.read()
+        if face is None:
+            face = frame
 
-        _, _, _, x_coords, y_coords = detectFace(frame, draw=False)
-
-        frame2 = frame
-
-        result = modelDetectFace(model, frame2)
+        _, _, detected, x_coords, y_coords = detectFace(frame, draw=False)
+        result, confidence = modelDetectFace(model, frame)
         print(result)
 
         # Swapping to match RGB888, othervise coming as BGR888
         # Which is not working on pyside2 from a pypi repo
         # frame[..., [0, 2]] = frame[..., [2, 0]]
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        cv2.rectangle(frame, (window_width - x_coords[0], y_coords[0]), (window_width - x_coords[1], y_coords[1]), 1)
 
+        if detected:
+            # face = deepcopy(frame)
+            face = frame[y_coords[0]:y_coords[1], x_coords[0]:x_coords[1]]
+            if face.shape[0] != 0 and face.shape[1] != 0:
+                face = cv2.cvtColor(face, cv2.COLOR_BGR2RGB)
+                face = cv2.resize(face, (400, 400))
+            # face = np.ascontiguousarray(face)
+
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        if detected:
+            if result is True:
+                cv2.rectangle(frame, (x_coords[0], y_coords[0]), (x_coords[1], y_coords[1]), (0, 255, 0), 1)
+                cv2.putText(frame, f"Conf: {confidence[0][0]:0.3f}", (x_coords[0], y_coords[0]), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+            else:
+                cv2.rectangle(frame, (x_coords[0], y_coords[0]), (x_coords[1], y_coords[1]), (255, 0, 0), 1)
+                cv2.putText(frame, f"Conf: {confidence[0][0]:0.3f}", (x_coords[0], y_coords[0]), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
+
+        FacePreviewWindow.show()
         VideoPreviewWindow.ImageFeed.setPixmap(QPixmap(QImage(frame.data, frame.shape[1], frame.shape[0], QtGui.QImage.Format.Format_RGB888)))
+        FacePreviewWindow.ImageFeed.setPixmap(QPixmap(QImage(face.data, face.shape[1], face.shape[0], QtGui.QImage.Format.Format_RGB888)).scaled(QSize(facewindow_width, facewindow_height), Qt.KeepAspectRatio))
         app.processEvents()
 
         if not VideoPreviewWindow.isVisible():
@@ -288,3 +341,4 @@ def testFaceRealTime(camera: QListWidgetItem, VideoPreviewWindow, app):
 
     camera.release()
     VideoPreviewWindow.hide()
+    FacePreviewWindow.hide()
