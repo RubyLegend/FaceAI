@@ -12,7 +12,6 @@ from tensorflow.keras.layers import (
     Dropout,
     Lambda,
     ELU,
-    concatenate,
     GlobalAveragePooling2D,
     Input,
     BatchNormalization,
@@ -22,28 +21,31 @@ from tensorflow.keras.layers import (
 )
 from tensorflow.keras.activations import relu, softmax
 from tensorflow.keras.layers import Conv2D as Convolution2D
-from tensorflow.keras.layers import MaxPooling2D, AveragePooling2D
-from tensorflow.keras.optimizers import Adam, SGD  # , RMSprop
-from tensorflow.keras.optimizers.schedules import ExponentialDecay
-from tensorflow.keras.losses import SparseCategoricalCrossentropy as SCC
+from tensorflow.keras.layers import MaxPooling2D, AveragePooling2D, GlobalAveragePooling2D, Concatenate
+from tensorflow.keras.optimizers import Adam, SGD, RMSprop, AdamW
+from tensorflow.keras.optimizers.schedules import ExponentialDecay, InverseTimeDecay
+from tensorflow.keras.losses import SparseCategoricalCrossentropy as SCC, MeanAbsoluteError
+from tensorflow.image import random_flip_left_right, random_flip_up_down, random_brightness, random_contrast, random_saturation
 
 # from tensorflow.keras.regularizers import l2
 from tensorflow.keras import backend as K
 from tensorflow.keras.utils import plot_model, split_dataset
 import tensorflow as tf
+import imgaug as ia
+import imgaug.augmenters as iaa
 
 import numpy as np
 import glob
 import random
 import cv2
 from matplotlib import pyplot as plt
-
+import pickle
 from PIL import Image
 
 from core.headPosition import detectFace
 
 gpus = tf.config.list_physical_devices('GPU')
-if gpus: 
+if gpus:
     tf.config.set_logical_device_configuration(
         gpus[0],
         [tf.config.LogicalDeviceConfiguration(memory_limit=3692)]
@@ -52,49 +54,98 @@ if gpus:
 logical_gpus = tf.config.list_logical_devices('GPU')
 print(len(gpus), "Physical GPU,", len(logical_gpus), "Logical GPUs")
 
-prepared_images_all = glob.glob(f"src/data/datasets/prepared/*.png")
-prep_left, prep_right = split_dataset(np.array(prepared_images_all), left_size=0.7)
-prep_left = [val.numpy() for val in prep_left]
-prep_right = [val.numpy() for val in prep_right]
+# prepared_images_all = glob.glob(f"src/data/datasets/prepared/*.png")
+# prep_left, prep_right = split_dataset(np.array(prepared_images_all), left_size=0.7)
+# prep_left = [val.numpy() for val in prep_left]
+# prep_right = [val.numpy() for val in prep_right]
+
+faces_train = {}
+faces_test = {}
+faces_valid = {}
+file2 = open("./src/data/datasets/list_eval_partition.txt")
+
+with open("./src/data/datasets/identity_CelebA.txt") as file:
+    for line in file:
+        filename2, partition = file2.readline().split()
+        partition = int(partition)
+        filename, identity = line.split()
+        identity = int(identity)
+        if partition == 0:
+            if identity not in faces_train:
+                faces_train[identity] = []
+            faces_train[identity].append(filename)
+        elif partition == 1:
+            if identity not in faces_test:
+                faces_test[identity] = []
+            faces_test[identity].append(filename)
+        else:
+            if identity not in faces_valid:
+                faces_valid[identity] = []
+            faces_valid[identity].append(filename)
+
+file2.close()
+
+def refresh_user_pictures():
+    # train - 70%
+    # test - 20%
+    # valid - 10%
+    images = [val for val in range(0, 36)]
+    images = random.sample(images, len(images))
+    train_end = int(len(images) * 0.7)
+    test_end = int(len(images) * 0.9)
+    valid_end = len(images)
+
+    faces_train['myface'] = [f"{it}.jpg" for it in range(0, train_end)]
+    faces_test['myface'] = [f"{it}.jpg" for it in range(train_end, test_end)]
+    faces_valid['myface'] = [f"{it}.jpg" for it in range(test_end, len(images))]
+
+# keys_train = list(faces_train.keys())
+# keys_test = list(faces_test.keys())
+# keys_valid = list(faces_valid.keys())
 
 
-prepared_images = {}
-for i in range(1, 11):
-    left, right = split_dataset(np.array(glob.glob(f"src/data/datasets/prepared/{i:03d}_*.png")), left_size = 0.7)
-    prepared_images[i] = {}
-    prepared_images[i][0] = [val.numpy() for val in left]
-    prepared_images[i][1] = [val.numpy() for val in right]
+# prepared_images = {}
+# for i in range(1, 11):
+#     left, right = split_dataset(np.array(glob.glob(f"src/data/datasets/prepared/{i:03d}_*.png")), left_size = 0.7)
+#     prepared_images[i] = {}
+#     prepared_images[i][0] = [val.numpy() for val in left]
+#     prepared_images[i][1] = [val.numpy() for val in right]
 
 
 def euclidean_distance(inputs):
     assert len(inputs) == 2, "Euclidean distance needs 2 inputs, %d given" % len(inputs)
     u, v = inputs
-    return K.sqrt(K.sum((K.square(u - v)), axis=1, keepdims=True))
+    sum_square = K.sum(K.square(u - v), axis=1, keepdims=True)
+    return K.sqrt(K.maximum(sum_square, K.epsilon()))
 
+def eucl_dist_output_shape(shapes):
+    shape1, shape2 = shapes
+    return (shape1[0], 1)
+
+def compute_accuracy(y_true, y_pred):
+    pred = y_pred.ravel() < 0.5
+    return np.mean(pred == y_true)
+
+def accuracy(y_true, y_pred):
+    return K.mean(K.equal(y_true, K.cast(y_pred < 0.5, y_true.dtype)))
 
 def contrastive_loss(y_true, y_pred):
-    margin = 1.0
-    return K.mean(
-        (1.0 - y_true) * K.square(y_pred)
-        + y_true * K.square(K.maximum(margin - y_pred, 0.0))
-    )
+    margin = 1
+    square_pred = K.square(y_pred)
+    margin_square = K.square(K.maximum(margin - y_pred, 0))
+    # return K.mean(
+    #     (1.0 - y_true) * 0.5 * K.square(y_pred)
+    #     + y_true * 0.5 * K.square(K.maximum(margin - y_pred, 0.0))
+    # )
+    return K.mean(y_true * square_pred + (1 - y_true) * margin_square)
 
 
 # return K.mean( K.square(y_pred) )
-emb_size=10
-alpha=1
-
-def triplet_loss(y_true, y_pred):
-    anchor, positive, negative = y_pred[:,:emb_size], y_pred[:,emb_size:2*emb_size],y_pred[:,2*emb_size:]
-    positive_dist = tf.reduce_mean(tf.square(anchor - positive), axis=1)
-    negative_dist = tf.reduce_mean(tf.square(anchor - negative), axis=1)
-    return tf.maximum(positive_dist - negative_dist + alpha, 0.)
-
-
 # --------------
 def fire(x, squeeze=16, expand=64):
     x = Convolution2D(squeeze, (1, 1), padding="valid")(x)
     x = Activation("relu")(x)
+    x = BatchNormalization()(x)
 
     left = Convolution2D(expand, (1, 1), padding="valid")(x)
     left = Activation("relu")(left)
@@ -102,8 +153,51 @@ def fire(x, squeeze=16, expand=64):
     right = Convolution2D(expand, (3, 3), padding="same")(x)
     right = Activation("relu")(right)
 
-    x = concatenate([left, right], axis=3)
+    x = Concatenate(axis=3)([left, right])
+    # x = tf.concat([left, right], 1)
     return x
+
+# class RandomInvert(tf.keras.layers.Layer):
+#     def __init__(self, max_value = float(255.0), factor=0.5, **kwargs):
+#         super().__init__(**kwargs)
+#         self.factor = factor
+#         self.max_value = max_value
+#
+#     def call(self, x):
+#         if tf.random.uniform([]) < self.factor:
+#             x = (self.max_value - x)
+#         return x
+#
+# data_augmentation = tf.keras.Sequential([
+#     RandomInvert(max_value = 224),
+#     tf.keras.layers.RandomFlip("horizontal_and_vertical"),
+#     tf.keras.layers.RandomRotation((-0.4, 0.4)),
+#     tf.keras.layers.RandomBrightness(factor=(-0.2, 0.2), value_range=(0., 1.)),
+#     tf.keras.layers.GaussianNoise(0.005),
+#     tf.keras.layers.RandomZoom(height_factor=(-0.4, 0.4)),
+#     tf.keras.layers.RandomContrast(factor=(0.1, 0.9)),
+#     tf.keras.layers.RandomTranslation(height_factor=0.2, width_factor=0.2)
+# ])
+#
+# data_augmentation.compile(optimizer=Adam(), loss=SCC())
+
+vflip = iaa.Flipud(p=1.0)
+hflip = iaa.Fliplr(p=1.0)
+crop1 = iaa.Crop(percent=(0, 0.15)) 
+noise=iaa.AdditiveGaussianNoise(10,40)
+shear = iaa.Affine(shear=(-40,40))
+contrast=iaa.GammaContrast((0.5, 2.0))
+# contrast_sig = iaa.SigmoidContrast(gain=(5, 10), cutoff=(0.4, 0.6))
+# contrast_lin = iaa.LinearContrast((0.6, 0.4))
+
+augments = [vflip, hflip, crop1, noise, shear, contrast]
+
+
+def data_augmentation(img):
+    for aug in augments:
+        img = aug.augment_image(img)
+
+    return img
 
 
 def getNewModel2():
@@ -113,9 +207,9 @@ def getNewModel2():
     img_input = Input(shape=(224, 224, 3))  # was 200, 200, 4
 
     x = Convolution2D(96, (7, 7), strides=2, padding="same")(img_input)
-    x = BatchNormalization()(x)
     x = Activation("relu")(x)
     x = MaxPooling2D(pool_size=(3, 3), strides=2)(x)
+    x = BatchNormalization()(x)
 
     x = fire(x, squeeze=16, expand=64)
 
@@ -124,186 +218,106 @@ def getNewModel2():
     x = fire(x, squeeze=32, expand=128)
 
     x = MaxPooling2D(pool_size=(3, 3), strides=2)(x)
-
-    x = fire(x, squeeze=32, expand=128)
-
-    x = fire(x, squeeze=48, expand=192)
-
-    x = fire(x, squeeze=48, expand=192)
-
-    x = fire(x, squeeze=64, expand=256)
-
-    x = MaxPooling2D(pool_size=(3, 3), strides=2)(x)
-
-    x = fire(x, squeeze=64, expand=256)
-
-    x = Dropout(0.001)(x)
-
-    x = Convolution2D(1000, (1, 1), strides=1)(x)
     # x = Activation("relu")(x)
-    out = AveragePooling2D(pool_size=(13, 13), strides=(1, 1))(x)
-    out = Activation("relu")(out)
+
+    x = fire(x, squeeze=32, expand=128)
+
+    x = fire(x, squeeze=48, expand=192)
+
+    x = fire(x, squeeze=48, expand=192)
+
+    x = fire(x, squeeze=64, expand=256)
+
+    x = MaxPooling2D(pool_size=(3, 3), strides=2)(x)
+    # x = Activation("relu")(x)
+
+    x = fire(x, squeeze=64, expand=256)
+
+    x = Dropout(0.5)(x)  # Only if learning the SqueezeNet itself
+
+    x = Convolution2D(1000, (1, 1), strides=1, activation="relu")(x)
+    x = BatchNormalization()(x)
+
+    x = GlobalAveragePooling2D()(x)  # I believe this layer is obsolete for a siamese network
+    # # Because there will be calculated eu
+    out = x
 
     modelsqueeze = Model(img_input, out)
 
-    modelsqueeze.summary()
+    # modelsqueeze.summary()
 
     # SqueezeNet end
 
-    # Second neural model - Siamese network
-    # Input image
-    im_in = Input(shape=(224, 224, 3))  # was 200, 200,4
+    # # # Second neural model - subnetwork
+    # # # Right now - disabled
+    # # # Input image
+    # im_in = Input(shape=(224, 224, 3))  # was 200, 200,4
+    #
+    # # processing with squeezenet
+    # x1 = modelsqueeze(im_in)
+    #
+    # # Flattening
+    # x1 = Flatten()(x1)  # 1,1,1000 -> 1000
+    # # x1 = GlobalAveragePooling2D()(x1)
+    # # x1 = Activation("relu")(x1)
+    #
+    # # Dense, dropout
+    # x1 = Dense(512, activation="relu")(x1)
+    # x1 = BatchNormalization()(x1)
+    # x1 = Dropout(0.1)(x1)
+    # x1 = Dense(512, activation="relu")(x1)
+    # x1 = BatchNormalization()(x1)
+    # x1 = Dropout(0.1)(x1)
+    # out_x = Dense(512, activation="relu")(x1)
+    #
+    # # Seems like getting features of image
+    # # feat_x = Dense(300)(x1)
+    # # L2 normalization of result
+    # # feat_x = Lambda(lambda x: K.l2_normalize(x, axis=1))(feat_x)
+    #
+    # # Finalizing model
+    # model_top = Model(inputs=[im_in], outputs=out_x)
+    #
+    # model_top.summary()
+    # # -----------------------------------------------
 
-    # processing with squeezenet
-    x1 = modelsqueeze(im_in)
+    # Siamese network
+    # Two images for siamese neural network
 
-    # Flattening
-    x1 = Flatten()(x1)  # 1,1,1000 -> 1000
+    im_in1 = Input(shape=(224, 224, 3))  # was 200, 200, 4
+    im_in2 = Input(shape=(224, 224, 3))  # was 200, 200, 4
 
-    # Dense, dropout
-    x1 = Dense(384)(x1)
-    x1 = BatchNormalization()(x1)
-    x1 = Activation("softmax")(x1)
-    x1 = Dropout(0.1)(x1)
-    # Seems like getting features of image
-    feat_x = Dense(30, activation="linear")(x1)
-    # L2 normalization of result
-    feat_x = Lambda(lambda x: K.l2_normalize(x, axis=1))(feat_x)
-
-    # Finalizing model
-    model_top = Model(inputs=[im_in], outputs=feat_x)
-
-    model_top.summary()
-
-    # Two images for siamese neural networki
-
-    im_in1 = Input(shape=(224, 224, 3))  # was 200, 200,4
-    im_in2 = Input(shape=(224, 224, 3))  # was 200, 200,4
-
-    feat_x1 = model_top(im_in1)
-    # feat_x1 = Activation("relu")(feat_x1)
-    feat_x2 = model_top(im_in2)
-    # feat_x2 = Activation("relu")(feat_x2)
+    # Processing them through squeezenet
+    feat_x1 = modelsqueeze(im_in1)
+    feat_x2 = modelsqueeze(im_in2)
 
     # Calculating euclidean_distance between two images
-    lambda_merge = Lambda(euclidean_distance)([feat_x1, feat_x2])
+    merge_layer = Lambda(euclidean_distance, output_shape=eucl_dist_output_shape)([feat_x1, feat_x2])
 
+    # normal_layer = BatchNormalization()(merge_layer)
+    # output_layer = Dense(1, activation="sigmoid")(merge_layer)
     # 3rd, and final model.
     # Input - two images.
     # Output - distance between two images
 
-    model_final = Model(inputs=[im_in1, im_in2], outputs=lambda_merge)
+    model_final = Model(inputs=[im_in1, im_in2], outputs=merge_layer)
 
     model_final.summary()
 
     # Optimizer
-    lr_schedule = ExponentialDecay(0.001, decay_steps=100000, decay_rate=0.96)
-    adam = Adam(learning_rate=lr_schedule)
-    # adam = Adam(learning_rate=0.001)
+    lr_schedule = ExponentialDecay(0.04, decay_steps=10000, decay_rate=0.96)
+    adam = Adam(learning_rate=0.00006)
+    adamw = AdamW()
+    rms = RMSprop()
 
-    sgd = SGD(learning_rate=0.001, momentum=0.9)
+    sgd = SGD(learning_rate=0.01, momentum=0.95)
 
     # Compiling network.
     # Loss function is custom
-    model_final.compile(optimizer=adam, metrics=['accuracy'], loss=contrastive_loss)
+    model_final.compile(optimizer=adam, metrics=[accuracy, "mae"], loss=contrastive_loss)
 
     # Output plot model to img
-    # plot_model(model_final, show_shapes=True, expand_nested=True, to_file="plot.png")
-
-    return model_final
-
-
-def getNewModel():
-    img_input = Input(shape=(224, 224, 3))  # was 200, 200, 4
-
-    x = Convolution2D(64, (5, 5), strides=(2, 2), padding="valid")(img_input)
-    x = BatchNormalization()(x)
-    x = Activation("relu")(x)
-    x = MaxPooling2D(pool_size=(3, 3), strides=(2, 2))(x)
-
-    x = fire(x, squeeze=16, expand=16)
-
-    x = fire(x, squeeze=16, expand=16)
-
-    x = MaxPooling2D(pool_size=(3, 3), strides=(2, 2))(x)
-
-    x = fire(x, squeeze=32, expand=32)
-
-    x = fire(x, squeeze=32, expand=32)
-
-    x = MaxPooling2D(pool_size=(3, 3), strides=(2, 2))(x)
-
-    x = fire(x, squeeze=48, expand=48)
-
-    x = fire(x, squeeze=48, expand=48)
-
-    x = fire(x, squeeze=64, expand=64)
-
-    x = fire(x, squeeze=64, expand=64)
-
-    x = Dropout(0.2)(x)
-
-    x = Convolution2D(512, (1, 1), padding="same")(x)
-    out = Activation("relu")(x)
-
-    modelsqueeze = Model(img_input, out)
-
-    modelsqueeze.summary()
-
-    im_in = Input(shape=(224, 224, 3))  # was 200, 200,4
-    # wrong = Input(shape=(130,200,3))
-
-    x1 = modelsqueeze(im_in)
-    # x = Convolution2D(64, (5, 5), padding='valid', strides =(2,2))(x)
-
-    # x1 = MaxPooling2D(pool_size=(3, 3), strides=(2, 2))(x1)
-
-    """
-    x1 = Convolution2D(256, (3,3), padding='valid', activation="relu")(x1)
-    x1 = Dropout(0.4)(x1)
-
-    x1 = MaxPooling2D(pool_size=(3, 3), strides=(1, 1))(x1)
-
-    x1 = Convolution2D(256, (3,3), padding='valid', activation="relu")(x1)
-    x1 = BatchNormalization()(x1)
-    x1 = Dropout(0.4)(x1)
-
-    x1 = Convolution2D(64, (1,1), padding='same', activation="relu")(x1)
-    x1 = BatchNormalization()(x1)
-    x1 = Dropout(0.4)(x1)
-    """
-
-    x1 = Flatten()(x1)
-
-    x1 = Dense(512, activation="relu")(x1)
-    x1 = Dropout(0.2)(x1)
-    # x1 = BatchNormalization()(x1)
-    feat_x = Dense(128, activation="linear")(x1)
-    feat_x = Lambda(lambda x: K.l2_normalize(x, axis=1))(feat_x)
-
-    model_top = Model(inputs=[im_in], outputs=feat_x)
-
-    model_top.summary()
-
-    im_in1 = Input(shape=(224, 224, 3))  # was 200, 200,4
-    im_in2 = Input(shape=(224, 224, 3))  # was 200, 200,4
-
-    feat_x1 = model_top(im_in1)
-    feat_x2 = model_top(im_in2)
-
-    lambda_merge = Lambda(euclidean_distance)([feat_x1, feat_x2])
-
-    model_final = Model(inputs=[im_in1, im_in2], outputs=lambda_merge)
-
-    model_final.summary()
-
-    adam = Adam(learning_rate=0.001)
-
-    sgd = SGD(learning_rate=0.001, momentum=0.9)
-
-    model_final.compile(optimizer=adam, loss=contrastive_loss)
-
-    # plot_model(model_final, show_shapes=True, expand_nested=True, to_file="plot.png")
+    plot_model(model_final, show_shapes=True, expand_nested=True, to_file="plot.png")
 
     return model_final
 
@@ -311,8 +325,8 @@ def getNewModel():
 def loadModel():
     # model 01getNewModel()
     model = load_model("src/faceid_network/", compile=False)
-    adam = Adam(learning_rate=0.001)
-    model.compile(optimizer=adam, loss=contrastive_loss)
+    adam = Adam(learning_rate=0.00006)
+    model.compile(optimizer=adam, loss=contrastive_loss, metrics=[accuracy, "mae"])
 
     return model
 
@@ -348,196 +362,267 @@ def get_offsets(x1, x2, y1, y2):
     return x1, x2, y1, y2, is_resize
 
 
-def create_correct_couple(folder, validation) -> np.array:
-    if folder == 0:
-        i = random.randint(0, 35)
-        img1 = np.load(f"src/data/{i}.npy")
-        # img1.thumbnail((640, 360))
-        img1 = cv2.resize(img1, (640, 360))
-        # img1.save("thumbnail.jpg", "JPEG")
-        # img1 = np.asarray(img1)
-        # _, _, detected, x_coords, y_coords = detectFace(img1)
-        # while not detected:
-        #     print(f'{i}: {detected}')
-        #     _, _, detected, x_coords, y_coords = detectFace(img1)
-        #
-        #
-        # x1, x2 = x_coords
-        # y1, y2 = y_coords
-        #
-        # x1, x2, y1, y2 = get_offsets(x1, x2, y1, y2)
-        #
-        # print(f'{i}, {detected}, {x_coords}, {y_coords}, {img1.shape}')
-        with open(f"src/data/{i}.pos") as file:
-            x1 = int(file.readline())
-            x2 = int(file.readline())
-            y1 = int(file.readline())
-            y2 = int(file.readline())
-            is_resize = bool(file.readline())
+# def create_correct_couple(folder, validation) -> np.array:
+#     if folder == 0:
+#         if validation:
+#             i = random.randint(0, 28)
+#         else:
+#             i = random.randint(29, 35)
+#
+#         img1 = np.load(f"src/data/{i}.npy")
+#         img1 = cv2.resize(img1, (640, 360))
+#         with open(f"src/data/{i}.pos") as file:
+#             x1 = int(file.readline())
+#             x2 = int(file.readline())
+#             y1 = int(file.readline())
+#             y2 = int(file.readline())
+#             is_resize = bool(file.readline())
+#
+#         img1 = img1[y1:y2, x1:x2]
+#         if is_resize:
+#             # top = int((224 - y2 + y1) / 2)
+#             # bottom = abs((y1-top + 224) - y2)
+#             # left = int((224 - x2 + x1) / 2)
+#             # right = abs((x1-left + 224) - x2)
+#             img1 = cv2.resize(img1, (224, 224))
+#             # img1 = cv2.copyMakeBorder(img1, top, bottom, left, right, cv2.BORDER_REFLECT)
+#
+#         if validation:
+#             i = random.randint(0, 28)
+#         else:
+#             i = random.randint(29, 35)
+#
+#         img2 = np.load(f"src/data/{i}.npy")
+#         img2 = cv2.resize(img2, (640, 360))
+#
+#         with open(f"src/data/{i}.pos") as file:
+#             x1 = int(file.readline())
+#             x2 = int(file.readline())
+#             y1 = int(file.readline())
+#             y2 = int(file.readline())
+#             is_resize = bool(file.readline())
+#
+#         img2 = img2[y1:y2, x1:x2]
+#         if is_resize:
+#             # top = int((224 - y2 + y1) / 2)
+#             # bottom = abs((y1-top + 224) - y2)
+#             # left = int((224 - x2 + x1) / 2)
+#             # right = abs((x1-left + 224) - x2)
+#             img2 = cv2.resize(img2, (224, 224))
+#             # img2 = cv2.copyMakeBorder(img2, top, bottom, left, right, cv2.BORDER_REFLECT)
+#
+#         img1 = data_augmentation(img1)
+#         img2 = data_augmentation(img2)
+#
+#         # i = random.randint(0, 2)
+#         # if i >= 1:
+#         #     img1 = cv2.flip(img1, i-1)
+#         # i = random.randint(0, 1)
+#         # if i >= 1:
+#         #     img2 = cv2.flip(img2, i-1)
+#
+#         return np.array([img1, img2])
+#     else:
+#         if validation:
+#             j = random.choice(list(faces_valid.keys())[:15])
+#             img1 = Image.open("./src/data/datasets/img_align_celeba/" + np.random.choice(faces_valid[j]))
+#             img1 = np.asarray(img1)
+#             # img1 = cv2.resize(img1, (224, 224))
+#             img1 = cv2.copyMakeBorder(img1, 3, 3, 23, 23, cv2.BORDER_REFLECT)
+#             img2 = Image.open("./src/data/datasets/img_align_celeba/" + np.random.choice(faces_valid[j]))
+#             img2 = np.asarray(img2)
+#             # img2 = cv2.resize(img2, (224, 224))
+#             img2 = cv2.copyMakeBorder(img2, 3, 3, 23, 23, cv2.BORDER_REFLECT)
+#         else:
+#             j = random.choice(list(faces_train.keys())[:15])
+#             img1 = Image.open("./src/data/datasets/img_align_celeba/" + np.random.choice(faces_train[j]))
+#             img1 = np.asarray(img1)
+#             # img1 = cv2.resize(img1, (224, 224))
+#             img1 = cv2.copyMakeBorder(img1, 3, 3, 23, 23, cv2.BORDER_REFLECT)
+#             img2 = Image.open("./src/data/datasets/img_align_celeba/" + np.random.choice(faces_train[j]))
+#             img2 = np.asarray(img2)
+#             # img2 = cv2.resize(img2, (224, 224))
+#             img2 = cv2.copyMakeBorder(img2, 3, 3, 23, 23, cv2.BORDER_REFLECT)
+#
+#         img1 = data_augmentation(img1)
+#         img2 = data_augmentation(img2)
+#         # i = random.randint(0, 2)
+#         # if i >= 1:
+#         #     img1 = cv2.flip(img1, i-1)
+#         # i = random.randint(0, 1)
+#         # if i >= 1:
+#         #     img2 = cv2.flip(img2, i-1)
+#         return np.array([img1, img2])
+#
+#
+# def create_incorrect_couple(folder, validation) -> np.array:
+#     if folder == 1:
+#
+#         if validation:
+#             i = random.randint(0, 28)
+#         else:
+#             i = random.randint(29, 35)
+#
+#         img1 = np.load(f"src/data/{i}.npy")
+#         img1 = cv2.resize(img1, (640, 360))
+#         with open(f"src/data/{i}.pos") as file:
+#             x1 = int(file.readline())
+#             x2 = int(file.readline())
+#             y1 = int(file.readline())
+#             y2 = int(file.readline())
+#             is_resize = bool(file.readline())
+#
+#         img1 = img1[y1:y2, x1:x2]
+#         if is_resize:
+#             # top = int((224 - y2 + y1) / 2)
+#             # bottom = abs((y1-top + 224) - y2)
+#             # left = int((224 - x2 + x1) / 2)
+#             # right = abs((x1-left + 224) - x2)
+#             img1 = cv2.resize(img1, (224, 224))
+#             # img1 = cv2.copyMakeBorder(img1, top, bottom, left, right, cv2.BORDER_REFLECT)
+#
+#         if validation:
+#             j = random.choice(list(faces_valid.keys())[:15])
+#             img2 = Image.open("./src/data/datasets/img_align_celeba/" + 
+#                 random.choice(
+#                     faces_valid[j]
+#                 )
+#             )
+#         else:
+#             j = random.choice(list(faces_train.keys())[:15])
+#             img2 = Image.open("./src/data/datasets/img_align_celeba/" + 
+#                 random.choice(
+#                     faces_train[j]
+#                 )
+#             )
+#         img2 = np.asarray(img2)
+#         # img2 = cv2.resize(img2, (224, 224))
+#         img2 = cv2.copyMakeBorder(img2, 3, 3, 23, 23, cv2.BORDER_REFLECT)
+#
+#         img1 = data_augmentation(img1)
+#         img2 = data_augmentation(img2)
+#         # i = random.randint(0, 2)
+#         # if i >= 1:
+#         #     img1 = cv2.flip(img1, i-1)
+#         # i = random.randint(0, 1)
+#         # if i >= 1:
+#         #     img2 = cv2.flip(img2, i-1)
+#         return np.array([img1, img2])
+#     else:
+#         if validation:
+#             j = random.choice(list(faces_valid.keys())[:15])
+#             file1 = random.choice(faces_valid[j])
+#             img1 = Image.open("./src/data/datasets/img_align_celeba/" + file1)
+#             img1 = np.asarray(img1)
+#             # img1 = cv2.resize(img1, (224, 224))
+#             img1 = cv2.copyMakeBorder(img1, 3, 3, 23, 23, cv2.BORDER_REFLECT)
+#
+#             i = random.choice(list(faces_valid.keys())[:15])
+#             if i == j:
+#                 i = random.choice(list(faces_valid.keys())[:15])
+#
+#             file2 = random.choice(faces_valid[i])
+#             img2 = Image.open("./src/data/datasets/img_align_celeba/" + file2)
+#             img2 = np.asarray(img2)
+#             # img2 = cv2.resize(img2, (224, 224))
+#             img2 = cv2.copyMakeBorder(img2, 3, 3, 23, 23, cv2.BORDER_REFLECT)
+#         else:
+#             j = random.choice(list(faces_train.keys())[:15])
+#             file1 = random.choice(faces_train[j])
+#             img1 = Image.open("./src/data/datasets/img_align_celeba/" + file1)
+#             img1 = np.asarray(img1)
+#             # img1 = cv2.resize(img1, (224, 224))
+#             img1 = cv2.copyMakeBorder(img1, 3, 3, 23, 23, cv2.BORDER_REFLECT)
+#
+#             i = random.choice(list(faces_train.keys())[:15])
+#             if i == j:
+#                 i = random.choice(list(faces_train.keys())[:15])
+#
+#             file2 = random.choice(faces_train[i])
+#             img2 = Image.open("./src/data/datasets/img_align_celeba/" + file2)
+#             img2 = np.asarray(img2)
+#             # img2 = cv2.resize(img2, (224, 224))
+#             img2 = cv2.copyMakeBorder(img2, 3, 3, 23, 23, cv2.BORDER_REFLECT)
+#
+#         img1 = data_augmentation(img1)
+#         img2 = data_augmentation(img2)
+#         # i = random.randint(0, 2)
+#         # if i >= 1:
+#         #     img1 = cv2.flip(img1, i-1)
+#         # i = random.randint(0, 1)
+#         # if i >= 1:
+#         #     img2 = cv2.flip(img2, i-1)
+#         return np.array([img1, img2])
 
-        img1 = img1[y1:y2, x1:x2]
-        if is_resize:
-            img1 = cv2.resize(img1, (224, 224))
-
-        # print(f'{i} ', end='')
-
-        i = random.randint(0, 35)
-        img2 = np.load(f"src/data/{i}.npy")
-        # img2.thumbnail((640, 480))
-        img2 = cv2.resize(img2, (640, 360))
-        # img2 = np.asarray(img2)
-        # _, _, detected, x_coords, y_coords = detectFace(img2)
-        #
-        # while not detected:
-        #     print(f'{i}: {detected}')
-        #     _, _, detected, x_coords, y_coords = detectFace(img2)
-        #
-        # x1, x2 = x_coords
-        # y1, y2 = y_coords
-        #
-        # x1, x2, y1, y2 = get_offsets(x1, x2, y1, y2)
-
-        # print(f'{i}, {detected}, {x_coords}, {y_coords}, {img2.shape}')
-        with open(f"src/data/{i}.pos") as file:
-            x1 = int(file.readline())
-            x2 = int(file.readline())
-            y1 = int(file.readline())
-            y2 = int(file.readline())
-            is_resize = bool(file.readline())
-
-        img2 = img2[y1:y2, x1:x2]
-        if is_resize:
-            img2 = cv2.resize(img2, (224, 224))
-
-        # print(f'{i}: {img1.shape}, {img2.shape}')
-
-        return np.array([img1, img2])
+def create_correct_couple(dataset, only_user) -> np.array:
+    if only_user:
+        j = "myface"
     else:
-        if validation:
-            i = 1
-        else:
-            i = 0
-        j = random.randint(1, 10)
-        img1 = Image.open(np.random.choice(prepared_images[j][i]))
-        img1 = np.asarray(img1)
-        img2 = Image.open(np.random.choice(prepared_images[j][i]))
-        img2 = np.asarray(img2)
+        j = random.choice(list(dataset.keys()))
+    base_path = "./src/data/"
+    if j != 'myface':
+        base_path += "datasets/img_align_celeba/"
+    file1 = base_path + np.random.choice(dataset[j])
+    img1 = Image.open(file1)
+    img1 = np.asarray(img1)
+    if j != 'myface':
+        img1 = cv2.copyMakeBorder(img1, 3, 3, 23, 23, cv2.BORDER_REFLECT)
+    file2 = base_path + np.random.choice(dataset[j])
+    img2 = Image.open(file2)
+    img2 = np.asarray(img2)
+    if j != 'myface':
+        img2 = cv2.copyMakeBorder(img2, 3, 3, 23, 23, cv2.BORDER_REFLECT)
 
-        return np.array([img1, img2])
+    # To prevent overfitting
+    # img1 = data_augmentation(img1)
+    # img2 = data_augmentation(img2)
+    if img1.shape != (224, 224, 3) or img2.shape != (224, 224, 3):
+        print(f'\nWARNING: img1 shape or img2 shape is broken. Validation: {validation}')
+        print(f'Key used: {j}')
+        print(f'file1: {file1}, out_shape: {img1.shape}')
+        print(f'file2: {file2}, out_shape: {img2.shape}')
+    return np.array([img1, img2])
 
 
-def create_incorrect_couple(folder, validation) -> np.array:
-    # folder = np.random.randint(2)
-    if folder == 1 or folder == 3:
-        i = random.randint(0, 35)
-        img1 = np.load(f"src/data/{i}.npy")
-        # img1.thumbnail((640, 360))
-        img1 = cv2.resize(img1, (640, 360))
-        with open(f"src/data/{i}.pos") as file:
-            x1 = int(file.readline())
-            x2 = int(file.readline())
-            y1 = int(file.readline())
-            y2 = int(file.readline())
-            is_resize = bool(file.readline())
-
-        img1 = img1[y1:y2, x1:x2]
-        if is_resize:
-            img1 = cv2.resize(img1, (224, 224))
-
-        # i = random.randint(0, 25)
-        # j = random.randint(0, 12)
-        # img1 = Image.open(np.random.choice(glob.glob(f"data/datasets/RGBD_Face_dataset_training/*_image_corrected.png")))
-        # img1.thumbnail((640, 360))
-        # img1 = np.asarray(img1)
-        # _, _, detected, x_coords, y_coords = detectFace(img1)
-        #
-        # while not detected:
-        #     print(f'{i},{j} - {detected}')
-        #     i = random.randint(0, 25)
-        #     j = random.randint(0, 12)
-        #     img1 = Image.open(f"data/datasets/RGBD_Face_dataset_training/{i:03d}_{j:02d}_image.png")
-        #     img1.thumbnail((640, 360))
-        #     img1 = np.asarray(img1)
-        #     _, _, detected, x_coords, y_coords = detectFace(img1)
-        #
-        # x1, x2 = x_coords
-        # y1, y2 = y_coords
-        #
-        # x1, x2, y1, y2 = get_offsets(x1, x2, y1, y2)
-
-        # Approximated coordinates, because mediapipe cannot detect faces propertly...
-        # x1, x2, y1, y2 = 200, 400, 80, 280
-
-        # img1 = img1[y1:y2, x1:x2]
-
-        # i = random.randint(0, 25)
-        # j = random.randint(0, 12)
-        if validation:
-            img2 = Image.open(
-                np.random.choice(
-                    prep_right
-                )
-            )
-        else:
-            img2 = Image.open(
-                np.random.choice(
-                    prep_left
-                )
-            )
-        # j = random.randint(1, 10)
-        # img2 = Image.open(
-        #     np.random.choice(
-        #         
-        #     )
-        # )
-        # img2.thumbnail((640, 360))
-        img2 = np.asarray(img2)
-        # _, _, detected, x_coords, y_coords = detectFace(img2)
-        #
-        # while not detected:
-        #     print(f'{i},{j} - {detected}')
-        #     i = random.randint(0, 25)
-        #     j = random.randint(0, 12)
-        #     img2 = Image.open(f"data/datasets/RGBD_Face_dataset_training/{i:03d}_{j:02d}_image.png")
-        #     img2.thumbnail((640, 360))
-        #     img2 = np.asarray(img2)
-        #     _, _, detected, x_coords, y_coords = detectFace(img2)
-        #
-        # x1, x2 = x_coords
-        # y1, y2 = y_coords
-        #
-        # x1, x2, y1, y2 = get_offsets(x1, x2, y1, y2)
-
-        # img2 = img2[y1:y2, x1:x2]
-
-        # print(f'{img1.shape}, {img2.shape}')
-
-        return np.array([img1, img2])
+def create_incorrect_couple(dataset, only_user) -> np.array:
+    if only_user:
+        j = "myface"
     else:
-        # i = random.randint(1, 10)
-        if validation:
-            i = 1
-        else:
-            i = 0
-        k = random.randint(1, 10)
-        file1 = np.random.choice(prepared_images[k][i])
-        img1 = Image.open(file1)
-        img1 = np.asarray(img1)
-        l = random.randint(1, 10)
-        while l != k:
-            l = random.randint(1, 10)
-        #     if validation:
-        #         j = random.randint(8, 10)
-        #     else:
-        #         j = random.randint(1, 7)
-        file2 = np.random.choice(prepared_images[l][i])
-        # while file2 == file1:
-        #     file2 = np.random.choice(prepared_images[j])
-        img2 = Image.open(file2)
-        img2 = np.asarray(img2)
+        j = random.choice(list(dataset.keys()))
+    file1 = random.choice(dataset[j])
+    base_path = "./src/data/"
+    if j != 'myface':
+        base_path += "datasets/img_align_celeba/"
 
-        return np.array([img1, img2])
+    file1 = base_path + file1
+    img1 = Image.open(file1)
+    img1 = np.asarray(img1)
+    if j != 'myface':
+        img1 = cv2.copyMakeBorder(img1, 3, 3, 23, 23, cv2.BORDER_REFLECT)
 
+    i = random.choice(list(dataset.keys()))
+    if i == j:
+        i = random.choice(list(dataset.keys()))
+
+    file2 = random.choice(dataset[i])
+    base_path = "./src/data/"
+    if i != 'myface':
+        base_path += "datasets/img_align_celeba/"
+
+    file2 = base_path + file2
+    img2 = Image.open(file2)
+    img2 = np.asarray(img2)
+    if i != 'myface':
+        img2 = cv2.copyMakeBorder(img2, 3, 3, 23, 23, cv2.BORDER_REFLECT)
+
+    # To prevent overfitting
+    # img1 = data_augmentation(img1)
+    # img2 = data_augmentation(img2)
+    if img1.shape != (224, 224, 3) or img2.shape != (224, 224, 3):
+        print(f'\nWARNING: img1 shape or img2 shape is broken. Validation: {validation}')
+        print(f'file1: {file1}, out_shape: {img1.shape}')
+        print(f'file2: {file2}, out_shape: {img2.shape}')
+    return np.array([img1, img2])
 
 
 def generate_batch(batch_size, with_invalid=False, validation=False):
@@ -546,57 +631,294 @@ def generate_batch(batch_size, with_invalid=False, validation=False):
         Y = (
             []
         )  # Labels that mark each of my captured images as true (of false, if I'm pre-train model)
-        
+
         valid = True
         for i in range(batch_size):
             if valid or with_invalid is False:
-                val = create_correct_couple(i%4, validation)
+                val = create_correct_couple(faces_train)
                 X.append(val)
                 Y.append(np.array([0.0]))
                 valid = False
-                # valid = False if np.random.random() <= 0.5 else True
             else:
-                val = create_incorrect_couple(i%4, validation)
+                val = create_incorrect_couple(faces_valid)
                 X.append(val)
                 Y.append(np.array([1.0]))
                 valid = True
-                # valid = False if np.random.random() <= 0.5 else True
 
         X = np.asarray(X)
         Y = np.asarray(Y)
 
         yield [X[:, 0], X[:, 1]], Y
 
+def create_couples(dataset, person_key, number_of_samples=50) -> np.array:
+    # j = random.choice(list(dataset.keys())[:50])
+    j = person_key
+    base_path = "./src/data/"
+    if j != 'myface':
+        base_path += "datasets/img_align_celeba/"
+
+    max_val = len(dataset[person_key])
+
+    X = []
+    Y = []
+
+    for i in range(max_val):
+        k = i
+        while k < max_val:
+            file1 = base_path + dataset[j][i]
+            img1 = Image.open(file1)
+            img1 = np.asarray(img1)
+            if j != 'myface':
+                img1 = cv2.copyMakeBorder(img1, 3, 3, 23, 23, cv2.BORDER_REFLECT)
+
+            file2 = base_path + dataset[j][k]
+            img2 = Image.open(file2)
+            img2 = np.asarray(img2)
+            if j != 'myface':
+                img2 = cv2.copyMakeBorder(img2, 3, 3, 23, 23, cv2.BORDER_REFLECT)
+            
+            X += [[img1, img2]]
+            Y += [[1.]]
+
+            l = random.choice(list(dataset.keys()))
+            if l == i:
+                l = random.choice(list(dataset.keys()))
+
+            file2 = random.choice(dataset[l])
+            base_path2 = "./src/data/"
+            if l != 'myface':
+                base_path2 += "datasets/img_align_celeba/"
+
+            file2 = base_path2 + file2
+            img2 = Image.open(file2)
+            img2 = np.asarray(img2)
+            if i != 'myface':
+                img2 = cv2.copyMakeBorder(img2, 3, 3, 23, 23, cv2.BORDER_REFLECT)
+            
+
+            X += [[img1, img2]]
+            Y += [[0.]]
+
+            k += 1
+
+    return X, Y
+
+full_train_data = []
+full_train_data_labels = []
+full_test_data = []
+full_test_data_labels = []
+full_valid_data = []
+full_valid_data_labels = []
+
+
+def generate_full_batch(max_number_of_faces=500, only_user=False):
+    global full_train_data, \
+           full_train_data_labels, \
+           full_test_data, \
+           full_test_data_labels, \
+           full_valid_data, \
+           full_valid_data_labels
+
+    valid = True
+    print(f"Generating {max_number_of_faces} pairs of images and splitting them, this may take a while (and some RAM ^_^)...")
+    for _ in range(int(max_number_of_faces*0.7)):
+        if valid:
+            val = create_correct_couple(faces_train, only_user)
+            full_train_data.append(val)
+            full_train_data_labels.append(np.array([1.0]))
+            valid = False
+        else:
+            val = create_incorrect_couple(faces_train, only_user)
+            full_train_data.append(val)
+            full_train_data_labels.append(np.array([0.0]))
+            valid = True
+    print("Train set done")
+
+    for _ in range(int(max_number_of_faces*0.2)):
+        if valid:
+            val = create_correct_couple(faces_test, only_user)
+            full_test_data.append(val)
+            full_test_data_labels.append(np.array([1.0]))
+            valid = False
+        else:
+            val = create_incorrect_couple(faces_test, only_user)
+            full_test_data.append(val)
+            full_test_data_labels.append(np.array([0.0]))
+            valid = True
+    print("Test set done")
+
+    for _ in range(int(max_number_of_faces*0.1)):
+        if valid:
+            val = create_correct_couple(faces_valid, only_user)
+            full_valid_data.append(val)
+            full_valid_data_labels.append(np.array([1.0]))
+            valid = False
+        else:
+            val = create_incorrect_couple(faces_valid, only_user)
+            full_valid_data.append(val)
+            full_valid_data_labels.append(np.array([0.0]))
+            valid = True
+    print("Valid set done")
+
+    # for key in list(faces_train.keys())[:max_number_of_faces]:
+    #     X, Y = create_couples(faces_train, key)
+    #     full_train_data = X
+    #     full_train_data_labels = Y
+    # print("Done train data")
+    # for key in list(faces_test.keys())[:max_number_of_faces]:
+    #     X, Y = create_couples(faces_test, key)
+    #     full_test_data = X
+    #     full_test_data_labels = Y
+    # print("Done test data")
+    # for key in list(faces_valid.keys())[:max_number_of_faces]:
+    #     X, Y = create_couples(faces_valid, key)
+    #     full_valid_data = X
+    #     full_valid_data_labels = Y
+    # print("Done valid data")
+
+    # For further batch support
+    # Without it you'll get an error
+    full_train_data = np.array(full_train_data)
+    full_train_data_labels = np.array(full_train_data_labels)
+    full_test_data = np.array(full_test_data)
+    full_test_data_labels = np.array(full_test_data_labels)
+    full_valid_data = np.array(full_valid_data)
+    full_valid_data_labels = np.array(full_valid_data_labels)
+
+    print("Generating done. Resuming training.")
+
+
+def visualize(pairs, labels, filename="test.png", to_show=6, num_col=3, predictions=None, test=False):
+    """Creates a plot of pairs and labels, and prediction if it's test dataset.
+
+    Arguments:
+        pairs: Numpy Array, of pairs to visualize, having shape
+               (Number of pairs, 2, 28, 28).
+        to_show: Int, number of examples to visualize (default is 6)
+                `to_show` must be an integral multiple of `num_col`.
+                 Otherwise it will be trimmed if it is greater than num_col,
+                 and incremented if if it is less then num_col.
+        num_col: Int, number of images in one row - (default is 3)
+                 For test and train respectively, it should not exceed 3 and 7.
+        predictions: Numpy Array of predictions with shape (to_show, 1) -
+                     (default is None)
+                     Must be passed when test=True.
+        test: Boolean telling whether the dataset being visualized is
+              train dataset or test dataset - (default False).
+
+    Returns:
+        None.
+    """
+
+    # Define num_row
+    # If to_show % num_col != 0
+    #    trim to_show,
+    #       to trim to_show limit num_row to the point where
+    #       to_show % num_col == 0
+    #
+    # If to_show//num_col == 0
+    #    then it means num_col is greater then to_show
+    #    increment to_show
+    #       to increment to_show set num_row to 1
+    num_row = to_show // num_col if to_show // num_col != 0 else 1
+
+    # `to_show` must be an integral multiple of `num_col`
+    #  we found num_row and we have num_col
+    #  to increment or decrement to_show
+    #  to make it integral multiple of `num_col`
+    #  simply set it equal to num_row * num_col
+    to_show = num_row * num_col
+
+    # Plot the images
+    fig, axes = plt.subplots(num_row, num_col, figsize=(5, 5))
+    for i in range(to_show):
+        # If the number of rows is 1, the axes array is one-dimensional
+        if num_row == 1:
+            ax = axes[i % num_col]
+        else:
+            ax = axes[i // num_col, i % num_col]
+
+        ax.imshow(concatenate([pairs[i][0], pairs[i][1]], axis=1), cmap="gray")
+        ax.set_axis_off()
+        if test:
+            ax.set_title("True: {} | Pred: {:.5f}".format(labels[i], predictions[i][0]))
+        else:
+            ax.set_title("Label: {}".format(labels[i]))
+    if test:
+        plt.tight_layout(rect=(0, 0, 5.9, 5.9), w_pad=0.0)
+    else:
+        plt.tight_layout(rect=(0, 0, 1, 1))
+    plt.savefig(filename)
+
 
 def train(model, event):
-    data = generate_batch(40, True, False)
-    val_data = generate_batch(16, True, True)
+    refresh_user_pictures()
+    generate_full_batch(1000, True)
+    # with open("dataset.dst", 'wb') as file:
+    #     pickle.dump(file, [full_train_data, full_train_data_labels, full_test_data, full_test_data_labels, full_valid_data, full_valid_data_labels])
+
+    # with open("dataset.dst", "rb") as file:
+    #     full_train_data, full_train_data_labels, full_test_data, full_test_data_labels, full_valid_data, full_valid_data_labels = pickle.load(file)
+
+    # print(f"Shape of full_train_data: {full_train_data.shape}, full_test_data: {full_test_data.shape}, full_valid_data: {full_valid_data.shape}")
+    # visualize(full_train_data[:-1], full_train_data_labels[:-1], to_show=4, num_col=2, filename="train.png")
+    # visualize(full_test_data[:-1], full_test_data_labels[:-1], to_show=4, num_col=2, filename="test.png")
+    # visualize(full_valid_data[:-1], full_valid_data_labels[:-1], to_show=4, num_col=2, filename="valid.png")
+
+
+    # data = generate_batch(40, True, False)
+    # val_data = generate_batch(10, True, True)
+
+    early_stop = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience = 10)
+    checkpointer = tf.keras.callbacks.ModelCheckpoint(
+          filepath='./src/faceid_network/',
+          save_best_only=True)
+
+
+
     new_model = model.fit(
-        data,
-        steps_per_epoch=10,
-        epochs=50,
-        validation_data=val_data,
-        validation_steps=10,
+        # data,
+        [full_train_data[:, 0], full_train_data[:, 1]], full_train_data_labels,
+        # steps_per_epoch=100,
+        batch_size=10,
+        epochs=10,
+        validation_data=([full_test_data[:, 0], full_test_data[:, 1]], full_test_data_labels),
+        # validation_steps=1,
+        callbacks=[
+            checkpointer,
+            early_stop,
+        ],
     )
 
-    fig = plt.figure()
+    # fig = plt.figure()
+    fig, axarr = plt.subplots(6, sharex=True, figsize=(15., 30.))  # Figsize in inches
 
-    plt.plot(new_model.history['loss'])
-    plt.plot(new_model.history['val_loss'])
-    plt.plot(new_model.history['accuracy'])
-    plt.plot(new_model.history['val_accuracy'])
-    plt.title('Model Accuracy')
+    axarr[0].plot(new_model.history['accuracy'])
+    axarr[1].plot(new_model.history['loss'])
+    axarr[2].plot(new_model.history['mae'])
+    axarr[3].plot(new_model.history['val_accuracy'])
+    axarr[4].plot(new_model.history['val_loss'])
+    axarr[5].plot(new_model.history['val_mae'])
+    plt.title('Model Metrics')
     plt.xlabel('Epoch')
-    plt.ylabel('Accuracy/Loss')
-    plt.legend(['loss', 'val_loss', 'accuracy', 'val_accuracy'], loc='upper left')
+    axarr[0].set_ylabel('Accuracy')
+    axarr[1].set_ylabel('Loss')
+    axarr[2].set_ylabel('MAE')
+    axarr[3].set_ylabel('Val Accuracy')
+    axarr[4].set_ylabel('Val Loss')
+    axarr[5].set_ylabel('Val MAE')
+    # plt.legend(['loss', 'val_loss', 'accuracy', 'val_accuracy'], loc='upper left')
 
-    fig.set_size_inches(30., 18.)
+    plt.tight_layout()
 
-    plt.savefig('history.png', dpi=300)
+    plt.savefig('history.png')
+    plt.savefig('history1.png', dpi=300)
     plt.savefig('history2.png', dpi=200)
     plt.savefig('history3.png', dpi=100)
     plt.savefig('history4.png', dpi=50)
     plt.savefig('history5.png', dpi=25)
+
+    plt.clf()
 
     model.save("./src/faceid_network/")
     event.set()
@@ -604,9 +926,10 @@ def train(model, event):
 
 def modelDetectFace(model, frame2):
     i = random.randint(0, 35)
-    frame1 = np.load(f"src/data/{i}.npy")
+    frame1 = Image.open(f"src/data/{i}.jpg")
+    frame1 = np.array(frame1)
     # img1.thumbnail((640, 360))
-    frame1 = cv2.resize(frame1, (640, 360))
+    # frame1 = cv2.resize(frame1, (640, 360))
     # img1 = np.asarray(img1)
     # _, _, _, x_coords, y_coords = detectFace(img1)
     #
@@ -615,13 +938,13 @@ def modelDetectFace(model, frame2):
     #
     # x1, x2, y1, y2 = get_offsets(x1, x2, y1, y2)
     #
-    with open(f"./src/data/{i}.pos") as file:
-        x1 = int(file.readline())
-        x2 = int(file.readline())
-        y1 = int(file.readline())
-        y2 = int(file.readline())
-
-    frame1 = frame1[y1:y2, x1:x2]
+    # with open(f"./src/data/{i}.pos") as file:
+    #     x1 = int(file.readline())
+    #     x2 = int(file.readline())
+    #     y1 = int(file.readline())
+    #     y2 = int(file.readline())
+    #
+    # frame1 = frame1[y1:y2, x1:x2]
 
     frame2 = cv2.resize(frame2, (640, 360))
     _, _, detected, x_coords, y_coords = detectFace(frame2)
@@ -652,6 +975,6 @@ def modelDetectFace(model, frame2):
 
     res = model.predict([np.array([frame1]), np.array([frame2])])
     print(res)
-    if res <= 0.15:
+    if res < 1.0:
         return True, res
     return False, res

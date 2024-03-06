@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 ################################################################################
-## Form generated from reading UI file 'MainWindowwKlUkl.ui'
+## Form generated from reading UI file 'MainWindowLxRIJV.ui'
 ##
 ## Created by: Qt User Interface Compiler version 5.15.11
 ##
@@ -137,7 +137,7 @@ class Ui_MainWindow(QMainWindow):
 #if QT_CONFIG(shortcut)
         self.actionExit.setShortcut(QCoreApplication.translate("MainWindow", u"Alt+X", None))
 #endif // QT_CONFIG(shortcut)
-        self.Title.setText(QCoreApplication.translate("MainWindow", u"Face Recognition System v0.4", None))
+        self.Title.setText(QCoreApplication.translate("MainWindow", u"Face Recognition System v0.5", None))
         self.Welcome_Message.setText(QCoreApplication.translate("MainWindow", u"Select your camera:", None))
         self.RefreshButton.setText(QCoreApplication.translate("MainWindow", u"Refresh list", None))
 

@@ -4,6 +4,6 @@ src/data
 .~lock.*
 # python virtualenv
 env/
-src/faceid_network
+src/faceid_network*
 .vscode
 *.docx

@@ -5,14 +5,17 @@ import math
 import numpy as np
 import threading
 from copy import deepcopy
+import glob
 
 from PySide2 import QtCore, QtGui
 from PySide2.QtCore import Qt, QSize
 from PySide2.QtWidgets import QListWidgetItem, QListWidget
 from PySide2.QtGui import QImage, QPixmap
 
+from matplotlib import pyplot as plt
+
 from core.headPosition import detectFace
-from core.network import getNewModel, getNewModel2, loadModel, train, modelDetectFace, get_offsets
+from core.network import getNewModel2, loadModel, train, modelDetectFace, get_offsets
 
 # Enumerate available cameras
 # Custom Linux and Windows detection, due to missing generic way
@@ -20,22 +23,29 @@ from core.network import getNewModel, getNewModel2, loadModel, train, modelDetec
 
 def enumerateCameras_Linux():
     cameras = {}
-    i = 0  
-    video_id = 0 # Iterate over each /dev/video*, but under /sys/class/video4linux
+    # i = 0  
+    # video_id = 0 # Iterate over each /dev/video*, but under /sys/class/video4linux
     # Assume, that video4linux is installed, so that path will exist.
-    device_exist = True
-    while device_exist:
-        if os.path.isfile(f"/sys/class/video4linux/video{i}/name"):
-            # print(f"Found path: /sys/class/video4linux/video{i}")
-            with open(f"/sys/class/video4linux/video{i}/name") as file:
-                name = file.read().strip()
-                # print(name)
-                cameras[i] = name
-                i += 1
-        else:
-            device_exist = False
+    for filename in glob.glob("/sys/class/video4linux/video*"):
+        with open(filename + "/name") as file:
+            id_camera = int(filename.split("video")[2])
+            cameras[id_camera] = file.read().strip()
+            print(f'Found /dev/video{id_camera}')
+                
 
-        video_id += 1
+    # device_exist = True
+    # while device_exist:
+    #     if os.path.isfile(f"/sys/class/video4linux/video*/name"):
+    #         # print(f"Found path: /sys/class/video4linux/video{i}")
+    #         with open(f"/sys/class/video4linux/video{i}/name") as file:
+    #             name = file.read().strip()
+    #             # print(name)
+    #             cameras[i] = name
+    #             i += 1
+    #     else:
+    #         device_exist = False
+    #
+    #     video_id += 1
 
     return cameras
 
@@ -107,7 +117,7 @@ def fillCameraList(CameraList: QListWidget):
     available_cameras = enumerateCameras()
     for port in available_cameras:
         QListWidgetItem(CameraList)
-        item = CameraList.item(port)
+        item = CameraList.item(CameraList.count()-1)
         item.setText(f'/dev/video{port}: {available_cameras[port]}')
         # item.setTextAlignment(Qt.AlignVCenter)
 
@@ -170,7 +180,7 @@ def enrollNewFace(camera: QListWidgetItem, VideoPreviewWindow, FacePreviewWindow
         sel2 = stencil == mask_value
         dots_selection.append(sel2)
 
-    reading = False  # Change to False, if you want to temporary skip capturing phase
+    reading = True  # Change to False, if you want to temporary skip capturing phase
 
     while reading:
         ret, raw_frame = camera.read()
@@ -187,15 +197,24 @@ def enrollNewFace(camera: QListWidgetItem, VideoPreviewWindow, FacePreviewWindow
             print(f'Registering: {it}')
             original = angles[it]
             angles[it] = (original[0], original[1], True)
-            np.save(f"./src/data/{it}", raw_frame)
+            # np.save(f"./src/data/{it}", raw_frame)
             
             x1, x2, y1, y2, is_resize = get_offsets(x_coords[0], x_coords[1], y_coords[0], y_coords[1])
-            with open(f"./src/data/{it}.pos", "w") as file:
-                file.write(str(x1) + '\n')
-                file.write(str(x2) + '\n')
-                file.write(str(y1) + '\n')
-                file.write(str(y2) + '\n')
-                file.write(str(is_resize) + '\n')
+
+            face_frame = cv2.resize(raw_frame, (640, 360))
+
+            face_frame = face_frame[y1:y2, x1:x2]
+            if is_resize:
+                face_frame = cv2.resize(face_frame, (224, 224))
+
+            # face_frame = cv2.cvtColor(face_frame, cv2.COLOR_BGR2RGB)
+            cv2.imwrite(f"./src/data/{it}.jpg", face_frame)
+            # with open(f"./src/data/{it}.pos", "w") as file:
+            #     file.write(str(x1) + '\n')
+            #     file.write(str(x2) + '\n')
+            #     file.write(str(y1) + '\n')
+            #     file.write(str(y2) + '\n')
+            #     file.write(str(is_resize) + '\n')
 
         # Swapping to match RGB888, othervise coming as BGR888
         # Which is not working on pyside2 from a pypi repo
@@ -204,14 +223,17 @@ def enrollNewFace(camera: QListWidgetItem, VideoPreviewWindow, FacePreviewWindow
         # Getting face cropped
         if detected:
             # face = deepcopy(frame)
-            face = raw_frame[y[0]:y[1], x[0]:x[1]]
+            # raw_frame = cv2.cvtColor(raw_frame, cv2.COLOR_RGB2BGR)
+            if raw_frame.shape != (224,224,3):
+                face = raw_frame[y[0]:y[1], x[0]:x[1]]
             if face.shape[0] != 0 and face.shape[1] != 0:
                 face = cv2.cvtColor(face, cv2.COLOR_BGR2RGB)
                 face = cv2.resize(face, (400, 400))
             # face = np.ascontiguousarray(face)
             print(face.shape)
 
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        # Flipping image berfore displaying, because it's not possible to follow it
+        frame = cv2.cvtColor(cv2.flip(frame, 1), cv2.COLOR_BGR2RGB)
         # Drawing white frame, to limit position of face in frame
         frame[sel] = fill_color
         # Drawing gray dots, to mimic FaceID dots
@@ -223,6 +245,7 @@ def enrollNewFace(camera: QListWidgetItem, VideoPreviewWindow, FacePreviewWindow
             else:
                 frame[dots_selection[it]] = fill_color_not_registered
                 reading = True
+
 
         FacePreviewWindow.show()
         VideoPreviewWindow.ImageFeed.setPixmap(QPixmap(QImage(frame.data, frame.shape[1], frame.shape[0], QtGui.QImage.Format.Format_RGB888)).scaled(QSize(window_width, window_height), Qt.KeepAspectRatio))
@@ -237,7 +260,7 @@ def enrollNewFace(camera: QListWidgetItem, VideoPreviewWindow, FacePreviewWindow
 
     if VideoPreviewWindow.isVisible():
         event = threading.Event()
-        threading.Thread(target=train, args=(getNewModel2(), event)).start()
+        threading.Thread(target=train, args=(loadModel(), event)).start()
         learning = True
         counter = 0
 
@@ -294,6 +317,8 @@ def testFaceRealTime(camera: QListWidgetItem, VideoPreviewWindow, FacePreviewWin
 
     face = None
 
+    plot_data = []
+
     # Loading model
     print("[DEBUG] Loading model...")
     model = loadModel()
@@ -308,6 +333,7 @@ def testFaceRealTime(camera: QListWidgetItem, VideoPreviewWindow, FacePreviewWin
 
         _, _, detected, x_coords, y_coords = detectFace(frame, draw=False)
         result, confidence = modelDetectFace(model, frame)
+        plot_data.append((result, confidence))
         print(result)
 
         # Swapping to match RGB888, othervise coming as BGR888
@@ -342,3 +368,9 @@ def testFaceRealTime(camera: QListWidgetItem, VideoPreviewWindow, FacePreviewWin
     camera.release()
     VideoPreviewWindow.hide()
     FacePreviewWindow.hide()
+
+    plt.plot(range(len(plot_data)), [val[0] for val in plot_data])
+    plt.plot(range(len(plot_data)), [val[1][0][0] for val in plot_data])
+    plt.xlabel("Time")
+    plt.ylabel("Is Valid Face")
+    plt.show()

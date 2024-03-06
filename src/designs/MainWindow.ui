@@ -43,7 +43,7 @@
        </font>
       </property>
       <property name="text">
-       <string>Face Recognition System v0.4</string>
+       <string>Face Recognition System v0.5</string>
       </property>
       <property name="alignment">
        <set>Qt::AlignCenter</set>
