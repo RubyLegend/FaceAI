@@ -7,3 +7,4 @@ env/
 src/faceid_network*
 .vscode
 *.docx
+experimentations/

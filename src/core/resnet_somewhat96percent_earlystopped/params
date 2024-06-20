@@ -1,0 +1,21 @@
+    lr_schedule = ExponentialDecay(0.01, decay_steps=32000, decay_rate=0.1)
+    adam = Adam(learning_rate=1e-10)
+    adamw = AdamW()
+    rms = RMSprop()
+
+    sgd = SGD(learning_rate=lr_schedule, momentum=0.9)
+
+    model.compile(
+        optimizer=sgd,
+        metrics=[
+            # "accuracy",
+            tf.keras.metrics.BinaryAccuracy(),
+            tf.keras.metrics.F1Score(average="weighted", threshold=0.4),
+            tf.keras.metrics.Precision(),
+            tf.keras.metrics.Recall(),
+            custom_f1,
+        ],
+        loss="binary_crossentropy",
+        # f1_score
+        # presicion_recall
+    )

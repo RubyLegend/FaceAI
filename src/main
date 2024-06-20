@@ -2,16 +2,25 @@
 
 import sys  # args
 import os  # Environment variables
+
 # Suppressing logging of OpenCV
 
-os.environ['OPENCV_LOG_LEVEL'] = 'OFF'
+os.environ["OPENCV_LOG_LEVEL"] = "OFF"
 
 from PySide2 import QtWidgets
 from PySide2.QtWidgets import QListWidgetItem
 from designs.ui_MainWindow import Ui_MainWindow
 from designs.ui_ErrorWindow import Ui_ErrorWindow
 from designs.ui_VideoPreviewWindow import Ui_VideoPreviewWindow
-from core.CameraUtils import enumerateCameras, openCameraFeed, errorSignal, fillCameraList, enrollNewFace, testFaceRealTime
+from core.CameraUtils import (
+    enumerateCameras,
+    openCameraFeed,
+    errorSignal,
+    fillCameraList,
+    enrollNewFace,
+    testFaceRealTime,
+)
+
 # Creating all windows
 app = QtWidgets.QApplication()
 MainWindow = Ui_MainWindow()
@@ -45,8 +54,13 @@ def enrollNewFaceHandler():
         showError("Select only one camera")
     else:
         MainWindow.hide()
-        enrollNewFace(selectedCamera[0], VideoPreviewWindow, FacePreviewWindow, app)
+        enrollNewFace(
+            selectedCamera[0], VideoPreviewWindow, FacePreviewWindow, app, True
+        )
         MainWindow.show()
+    # selectedCamera = ["/dev/true"]
+    # print("Opening...")
+    # enrollNewFace(selectedCamera[0], VideoPreviewWindow, FacePreviewWindow, app, True)
 
 
 def testFaceHandler():

@@ -205,7 +205,7 @@ def visualize(image, detection_result) -> np.ndarray:
 
 
 # STEP 2: Create an FaceDetector object.
-base_options = python.BaseOptions(model_asset_path="src/blaze_face_short_range.tflite")
+base_options = python.BaseOptions(model_asset_path="/home/ruby/Code_Workspace/ITvR/CourseWork/blaze_face_short_range.tflite")
 options = vision.FaceDetectorOptions(base_options=base_options)
 detector = vision.FaceDetector.create_from_options(options)
 

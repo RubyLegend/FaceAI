@@ -16,6 +16,7 @@ from matplotlib import pyplot as plt
 
 from core.headPosition import detectFace
 from core.network import getNewModel2, loadModel, train, modelDetectFace, get_offsets
+from core.antispoof import loadAntispoofModel, load_imagenet_mobilenetv2, testModel
 
 # Enumerate available cameras
 # Custom Linux and Windows detection, due to missing generic way
@@ -23,29 +24,12 @@ from core.network import getNewModel2, loadModel, train, modelDetectFace, get_of
 
 def enumerateCameras_Linux():
     cameras = {}
-    # i = 0  
-    # video_id = 0 # Iterate over each /dev/video*, but under /sys/class/video4linux
     # Assume, that video4linux is installed, so that path will exist.
     for filename in glob.glob("/sys/class/video4linux/video*"):
         with open(filename + "/name") as file:
             id_camera = int(filename.split("video")[2])
             cameras[id_camera] = file.read().strip()
-            print(f'Found /dev/video{id_camera}')
-                
-
-    # device_exist = True
-    # while device_exist:
-    #     if os.path.isfile(f"/sys/class/video4linux/video*/name"):
-    #         # print(f"Found path: /sys/class/video4linux/video{i}")
-    #         with open(f"/sys/class/video4linux/video{i}/name") as file:
-    #             name = file.read().strip()
-    #             # print(name)
-    #             cameras[i] = name
-    #             i += 1
-    #     else:
-    #         device_exist = False
-    #
-    #     video_id += 1
+            print(f"Found /dev/video{id_camera}")
 
     return cameras
 
@@ -69,7 +53,7 @@ errorSignal = errorObject()
 # Simple function for watching camera feed
 def openCameraFeed(camera: QListWidgetItem, VideoPreviewWindow, app):
     camera_name = camera.text()
-    camera_path = camera_name.split(':')[0]
+    camera_path = camera_name.split(":")[0]
 
     print("[DEBUG] Opening camera: " + str(camera_path))
     camera = cv2.VideoCapture(camera_path)
@@ -81,7 +65,7 @@ def openCameraFeed(camera: QListWidgetItem, VideoPreviewWindow, app):
     # Forcing maximum camera resolution
     camera.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
     camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-    camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+    camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
 
     window_width, window_height = 1280, 720
 
@@ -101,8 +85,17 @@ def openCameraFeed(camera: QListWidgetItem, VideoPreviewWindow, app):
         # Which is not working on pyside2 from a pypi repo
         # frame[..., [0, 2]] = frame[..., [2, 0]]
         frame = cv2.cvtColor(cv2.flip(frame, 1), cv2.COLOR_BGR2RGB)
-        
-        VideoPreviewWindow.ImageFeed.setPixmap(QPixmap(QImage(frame.data, frame.shape[1], frame.shape[0], QtGui.QImage.Format.Format_RGB888)).scaled(QSize(window_width, window_height), Qt.KeepAspectRatio))
+
+        VideoPreviewWindow.ImageFeed.setPixmap(
+            QPixmap(
+                QImage(
+                    frame.data,
+                    frame.shape[1],
+                    frame.shape[0],
+                    QtGui.QImage.Format.Format_RGB888,
+                )
+            ).scaled(QSize(window_width, window_height), Qt.KeepAspectRatio)
+        )
         app.processEvents()
 
         if not VideoPreviewWindow.isVisible():
@@ -117,30 +110,42 @@ def fillCameraList(CameraList: QListWidget):
     available_cameras = enumerateCameras()
     for port in available_cameras:
         QListWidgetItem(CameraList)
-        item = CameraList.item(CameraList.count()-1)
-        item.setText(f'/dev/video{port}: {available_cameras[port]}')
+        item = CameraList.item(CameraList.count() - 1)
+        item.setText(f"/dev/video{port}: {available_cameras[port]}")
         # item.setTextAlignment(Qt.AlignVCenter)
 
 
-def enrollNewFace(camera: QListWidgetItem, VideoPreviewWindow, FacePreviewWindow, app):
-    camera_name = camera.text()
-    camera_path = camera_name.split(':')[0]
-
-    print("[DEBUG] Opening camera: " + str(camera_path))
-    camera = cv2.VideoCapture(camera_path)
-
-    if camera.isOpened() is False:
-        errorSignal.errorSignal.emit("Failed to open camera. Error occured.")
-        return
-
+def enrollNewFace(
+    camera: QListWidgetItem,
+    VideoPreviewWindow,
+    FacePreviewWindow,
+    app,
+    skipCamera=False,
+):
     img_w = 1280
     img_h = 720
-    camera.set(cv2.CAP_PROP_FRAME_WIDTH, img_w)
-    camera.set(cv2.CAP_PROP_FRAME_HEIGHT, img_h)
-    camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
-
     window_width, window_height = 1280, 720
     facewindow_width, facewindow_height = 500, 500
+    if not skipCamera:
+        camera_name = camera.text()
+        camera_path = camera_name.split(":")[0]
+
+        print("[DEBUG] Opening camera: " + str(camera_path))
+        camera = cv2.VideoCapture(camera_path)
+
+        if camera.isOpened() is False:
+            errorSignal.errorSignal.emit("Failed to open camera. Error occured.")
+            return
+
+        camera.set(cv2.CAP_PROP_FRAME_WIDTH, img_w)
+        camera.set(cv2.CAP_PROP_FRAME_HEIGHT, img_h)
+        camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+
+        FacePreviewWindow.show()
+        FacePreviewWindow.resize(facewindow_width, facewindow_height)
+        FacePreviewWindow.setMinimumSize(QSize(0, 0))
+        FacePreviewWindow.setMaximumSize(QSize(facewindow_width, facewindow_height))
+        FacePreviewWindow.setMinimumSize(QSize(facewindow_width, facewindow_height))
 
     VideoPreviewWindow.show()
     VideoPreviewWindow.resize(window_width, window_height)
@@ -148,13 +153,7 @@ def enrollNewFace(camera: QListWidgetItem, VideoPreviewWindow, FacePreviewWindow
     VideoPreviewWindow.setMaximumSize(QSize(window_width, window_height))
     VideoPreviewWindow.setMinimumSize(QSize(window_width, window_height))
 
-    FacePreviewWindow.show()
-    FacePreviewWindow.resize(facewindow_width, facewindow_height)
-    FacePreviewWindow.setMinimumSize(QSize(0, 0))
-    FacePreviewWindow.setMaximumSize(QSize(facewindow_width, facewindow_height))
-    FacePreviewWindow.setMinimumSize(QSize(facewindow_width, facewindow_height))
-
-    circle_center = (int(img_w/2), int(img_h/2))
+    circle_center = (int(img_w / 2), int(img_h / 2))
     radius = 250
 
     fill_color = (255, 255, 255)
@@ -167,9 +166,24 @@ def enrollNewFace(camera: QListWidgetItem, VideoPreviewWindow, FacePreviewWindow
 
     # Prepare lines that will indicate, whether specified angle
     # was registered
-    angles = [(350 - alpha, (int(circle_center[0] + radius * math.cos(alpha*2*math.pi / 360)),
-                int(circle_center[1] + radius * math.sin(alpha*2*math.pi / 360))), False) for alpha in range(0, 360, 10)]
-    angles2 = [(int(val[0] + math.cos((350 - alpha)*2*math.pi/360)*20), int(val[1] + math.sin((350 - alpha)*2*math.pi/360)*20)) for alpha, val, _ in angles]
+    angles = [
+        (
+            350 - alpha,
+            (
+                int(circle_center[0] + radius * math.cos(alpha * 2 * math.pi / 360)),
+                int(circle_center[1] + radius * math.sin(alpha * 2 * math.pi / 360)),
+            ),
+            False,
+        )
+        for alpha in range(0, 360, 10)
+    ]
+    angles2 = [
+        (
+            int(val[0] + math.cos((350 - alpha) * 2 * math.pi / 360) * 20),
+            int(val[1] + math.sin((350 - alpha) * 2 * math.pi / 360) * 20),
+        )
+        for alpha, val, _ in angles
+    ]
 
     dots_selection = []
     face = None
@@ -180,7 +194,9 @@ def enrollNewFace(camera: QListWidgetItem, VideoPreviewWindow, FacePreviewWindow
         sel2 = stencil == mask_value
         dots_selection.append(sel2)
 
-    reading = True  # Change to False, if you want to temporary skip capturing phase
+    reading = (
+        not skipCamera
+    )  # Change to False, if you want to temporary skip capturing phase
 
     while reading:
         ret, raw_frame = camera.read()
@@ -190,22 +206,33 @@ def enrollNewFace(camera: QListWidgetItem, VideoPreviewWindow, FacePreviewWindow
         frame, angle, detected, x, y = detectFace(raw_frame, draw=True)
         # Trying to recognize again, because later network fails to recognize it
         # Even though it was recognized successfully.
-        _, _, detected2, x_coords, y_coords = detectFace(cv2.resize(raw_frame, (640, 360)), draw=False)
+        _, _, detected2, x_coords, y_coords = detectFace(
+            cv2.resize(raw_frame, (640, 360)), draw=False
+        )
         it = len(angles) - int(angle / 10) - 1
-        if angle != 0 and int(angle % 10) <= 3 and angles[it][2] is not True and detected2 is True:
-            print(f'Detected on downscaled image: {detected2}')
-            print(f'Registering: {it}')
+        if (
+            angle != 0
+            and int(angle % 10) <= 3
+            and angles[it][2] is not True
+            and detected2 is True
+        ):
+            print(f"Detected on downscaled image: {detected2}")
+            print(f"Registering: {it}")
             original = angles[it]
             angles[it] = (original[0], original[1], True)
             # np.save(f"./src/data/{it}", raw_frame)
-            
-            x1, x2, y1, y2, is_resize = get_offsets(x_coords[0], x_coords[1], y_coords[0], y_coords[1])
+
+            # x1, x2, y1, y2, is_resize = get_offsets(x_coords[0], x_coords[1], y_coords[0], y_coords[1])
 
             face_frame = cv2.resize(raw_frame, (640, 360))
 
-            face_frame = face_frame[y1:y2, x1:x2]
-            if is_resize:
-                face_frame = cv2.resize(face_frame, (224, 224))
+            # face_frame = face_frame[y1:y2, x1:x2]
+            face_frame = face_frame[
+                y_coords[0] : y_coords[1], x_coords[0] : x_coords[1]
+            ]
+            # if is_resize:
+            #    face_frame = cv2.resize(face_frame, (224, 224))
+            face_frame = cv2.resize(face_frame, (224, 224))
 
             # face_frame = cv2.cvtColor(face_frame, cv2.COLOR_BGR2RGB)
             cv2.imwrite(f"./src/data/{it}.jpg", face_frame)
@@ -224,8 +251,8 @@ def enrollNewFace(camera: QListWidgetItem, VideoPreviewWindow, FacePreviewWindow
         if detected:
             # face = deepcopy(frame)
             # raw_frame = cv2.cvtColor(raw_frame, cv2.COLOR_RGB2BGR)
-            if raw_frame.shape != (224,224,3):
-                face = raw_frame[y[0]:y[1], x[0]:x[1]]
+            if raw_frame.shape != (224, 224, 3):
+                face = raw_frame[y[0] : y[1], x[0] : x[1]]
             if face.shape[0] != 0 and face.shape[1] != 0:
                 face = cv2.cvtColor(face, cv2.COLOR_BGR2RGB)
                 face = cv2.resize(face, (400, 400))
@@ -246,21 +273,40 @@ def enrollNewFace(camera: QListWidgetItem, VideoPreviewWindow, FacePreviewWindow
                 frame[dots_selection[it]] = fill_color_not_registered
                 reading = True
 
-
         FacePreviewWindow.show()
-        VideoPreviewWindow.ImageFeed.setPixmap(QPixmap(QImage(frame.data, frame.shape[1], frame.shape[0], QtGui.QImage.Format.Format_RGB888)).scaled(QSize(window_width, window_height), Qt.KeepAspectRatio))
-        FacePreviewWindow.ImageFeed.setPixmap(QPixmap(QImage(face.data, face.shape[1], face.shape[0], QtGui.QImage.Format.Format_RGB888)).scaled(QSize(facewindow_width, facewindow_height), Qt.KeepAspectRatio))
+        VideoPreviewWindow.ImageFeed.setPixmap(
+            QPixmap(
+                QImage(
+                    frame.data,
+                    frame.shape[1],
+                    frame.shape[0],
+                    QtGui.QImage.Format.Format_RGB888,
+                )
+            ).scaled(QSize(window_width, window_height), Qt.KeepAspectRatio)
+        )
+        FacePreviewWindow.ImageFeed.setPixmap(
+            QPixmap(
+                QImage(
+                    face.data,
+                    face.shape[1],
+                    face.shape[0],
+                    QtGui.QImage.Format.Format_RGB888,
+                )
+            ).scaled(QSize(facewindow_width, facewindow_height), Qt.KeepAspectRatio)
+        )
         app.processEvents()
 
         if not VideoPreviewWindow.isVisible():
             reading = False
 
-    camera.release()
-    FacePreviewWindow.hide()
+    print("Skipped reading")
+    if not skipCamera:
+        camera.release()
+        FacePreviewWindow.hide()
 
     if VideoPreviewWindow.isVisible():
         event = threading.Event()
-        threading.Thread(target=train, args=(loadModel(), event)).start()
+        threading.Thread(target=train, args=(getNewModel2(), event)).start()
         learning = True
         counter = 0
 
@@ -275,7 +321,9 @@ def enrollNewFace(camera: QListWidgetItem, VideoPreviewWindow, FacePreviewWindow
             if event.is_set():
                 learning = False
 
-        VideoPreviewWindow.ImageFeed.setText("Done. Now you can test by selecting \'Test network\' button")
+        VideoPreviewWindow.ImageFeed.setText(
+            "Done. Now you can test by selecting 'Test network' button"
+        )
         app.processEvents()
         app.processEvents()
         time.sleep(3)
@@ -284,9 +332,11 @@ def enrollNewFace(camera: QListWidgetItem, VideoPreviewWindow, FacePreviewWindow
     FacePreviewWindow.hide()
 
 
-def testFaceRealTime(camera: QListWidgetItem, VideoPreviewWindow, FacePreviewWindow, app):
+def testFaceRealTime(
+    camera: QListWidgetItem, VideoPreviewWindow, FacePreviewWindow, app
+):
     camera_name = camera.text()
-    camera_path = camera_name.split(':')[0]
+    camera_path = camera_name.split(":")[0]
 
     print("[DEBUG] Opening camera: " + str(camera_path))
     camera = cv2.VideoCapture(camera_path)
@@ -298,7 +348,7 @@ def testFaceRealTime(camera: QListWidgetItem, VideoPreviewWindow, FacePreviewWin
     # Forcing maximum camera resolution
     camera.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
     camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-    camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+    camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
 
     window_width, window_height = 1280, 720
     facewindow_width, facewindow_height = 600, 600
@@ -316,12 +366,13 @@ def testFaceRealTime(camera: QListWidgetItem, VideoPreviewWindow, FacePreviewWin
     FacePreviewWindow.setMinimumSize(QSize(facewindow_width, facewindow_height))
 
     face = None
-
+    spoofed = False
     plot_data = []
 
     # Loading model
     print("[DEBUG] Loading model...")
-    model = loadModel()
+    model = loadAntispoofModel("./src/faceantispoof_network.keras")
+    model2 = loadModel()
     print("[DEBUG] Model loaded.")
 
     reading = True  # Change to False, if you want to temporary skip capturing phase
@@ -332,9 +383,7 @@ def testFaceRealTime(camera: QListWidgetItem, VideoPreviewWindow, FacePreviewWin
             face = frame
 
         _, _, detected, x_coords, y_coords = detectFace(frame, draw=False)
-        result, confidence = modelDetectFace(model, frame)
-        plot_data.append((result, confidence))
-        print(result)
+        # result, confidence = modelDetectFace(model, frame)
 
         # Swapping to match RGB888, othervise coming as BGR888
         # Which is not working on pyside2 from a pypi repo
@@ -342,24 +391,102 @@ def testFaceRealTime(camera: QListWidgetItem, VideoPreviewWindow, FacePreviewWin
 
         if detected:
             # face = deepcopy(frame)
-            face = frame[y_coords[0]:y_coords[1], x_coords[0]:x_coords[1]]
+            face = frame[y_coords[0] : y_coords[1], x_coords[0] : x_coords[1]]
             if face.shape[0] != 0 and face.shape[1] != 0:
                 face = cv2.cvtColor(face, cv2.COLOR_BGR2RGB)
+
+                # Integrated test of model
+                result, confidence = testModel(model, face)
+                # result = False
+                # plot_data.append((result, confidence))
+                print(result)
+                if result is True:
+                    result2, confidence = modelDetectFace(model2, face)
+                    confidence += 0.4
+                    spoofed = False
+                else:
+                    result2 = False
+                    spoofed = True
+
                 face = cv2.resize(face, (400, 400))
             # face = np.ascontiguousarray(face)
 
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         if detected:
             if result is True:
-                cv2.rectangle(frame, (x_coords[0], y_coords[0]), (x_coords[1], y_coords[1]), (0, 255, 0), 1)
-                cv2.putText(frame, f"Conf: {confidence[0][0]:0.3f}", (x_coords[0], y_coords[0]), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                if result2 is True:
+                    cv2.rectangle(
+                        frame,
+                        (x_coords[0], y_coords[0]),
+                        (x_coords[1], y_coords[1]),
+                        (0, 255, 0),
+                        1,
+                    )
+                    cv2.putText(
+                        frame,
+                        f"Conf: {confidence[0][0]:0.3f}",
+                        (x_coords[0], y_coords[0]),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        1,
+                        (0, 255, 0),
+                        2,
+                    )
+                else:
+                    cv2.rectangle(
+                        frame,
+                        (x_coords[0], y_coords[0]),
+                        (x_coords[1], y_coords[1]),
+                        (255, 0, 0),
+                        1,
+                    )
+                    cv2.putText(
+                        frame,
+                        f"Conf: {confidence[0][0]:0.3f}",
+                        (x_coords[0], y_coords[0]),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        1,
+                        (255, 0, 0),
+                        2,
+                    )
             else:
-                cv2.rectangle(frame, (x_coords[0], y_coords[0]), (x_coords[1], y_coords[1]), (255, 0, 0), 1)
-                cv2.putText(frame, f"Conf: {confidence[0][0]:0.3f}", (x_coords[0], y_coords[0]), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
+                cv2.rectangle(
+                    frame,
+                    (x_coords[0], y_coords[0]),
+                    (x_coords[1], y_coords[1]),
+                    (255, 0, 0),
+                    1,
+                )
+                cv2.putText(
+                    frame,
+                    f"Spoofed: {confidence[0][0]:0.3f}",
+                    (x_coords[0], y_coords[0]),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    1,
+                    (255, 0, 0),
+                    2,
+                )
 
         FacePreviewWindow.show()
-        VideoPreviewWindow.ImageFeed.setPixmap(QPixmap(QImage(frame.data, frame.shape[1], frame.shape[0], QtGui.QImage.Format.Format_RGB888)))
-        FacePreviewWindow.ImageFeed.setPixmap(QPixmap(QImage(face.data, face.shape[1], face.shape[0], QtGui.QImage.Format.Format_RGB888)).scaled(QSize(facewindow_width, facewindow_height), Qt.KeepAspectRatio))
+        VideoPreviewWindow.ImageFeed.setPixmap(
+            QPixmap(
+                QImage(
+                    frame.data,
+                    frame.shape[1],
+                    frame.shape[0],
+                    QtGui.QImage.Format.Format_RGB888,
+                )
+            )
+        )
+        FacePreviewWindow.ImageFeed.setPixmap(
+            QPixmap(
+                QImage(
+                    face.data,
+                    face.shape[1],
+                    face.shape[0],
+                    QtGui.QImage.Format.Format_RGB888,
+                )
+            ).scaled(QSize(facewindow_width, facewindow_height), Qt.KeepAspectRatio)
+        )
         app.processEvents()
 
         if not VideoPreviewWindow.isVisible():
@@ -369,8 +496,9 @@ def testFaceRealTime(camera: QListWidgetItem, VideoPreviewWindow, FacePreviewWin
     VideoPreviewWindow.hide()
     FacePreviewWindow.hide()
 
-    plt.plot(range(len(plot_data)), [val[0] for val in plot_data])
-    plt.plot(range(len(plot_data)), [val[1][0][0] for val in plot_data])
-    plt.xlabel("Time")
-    plt.ylabel("Is Valid Face")
-    plt.show()
+    # plt.plot(range(len(plot_data)), [val[0] for val in plot_data])
+    # plt.plot(range(len(plot_data)), [val[1][0][0] for val in plot_data])
+    # plt.xlabel("Time")
+    # plt.ylabel("Is Valid Face")
+    # plt.show()
+    # plt.clf()
